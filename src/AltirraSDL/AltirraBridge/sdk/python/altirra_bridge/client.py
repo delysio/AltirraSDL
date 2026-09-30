@@ -1114,18 +1114,19 @@ class AltirraBridge:
     def profile_dump(self, top: int = 32) -> dict:
         """Dump the top ``top`` hot addresses. Returns a dict with
         ``total_cycles``, ``total_insns``, ``count``, and ``hot``
-        (list of ``{addr, cycles, insns, calls}``).
+        (list of ``{addr, addr24, gaddr, cycles, insns, calls}``).
 
-        Requires :meth:`profile_stop` first. Calling twice returns an
-        empty session the second time (the data is moved out of the
-        profiler on first read).
+        Requires :meth:`profile_stop` first. Repeated dumps read the
+        cached session until the next :meth:`profile_start`. ``addr24``
+        is the low 24 bits of ``gaddr``; mapped-memory records may encode
+        a cartridge or PORTB bank rather than the CPU program bank.
         """
         return self._cmd_ok(f"PROFILE_DUMP top={top}")
 
     def profile_dump_tree(self) -> list:
         """Dump the hierarchical call tree. Only valid in ``callgraph``
         mode. Returns a list of nodes with ``ctx``, ``parent``,
-        ``addr``, ``calls``, ``excl_cycles``, ``excl_insns``,
+        ``addr``, ``addr24``, ``gaddr``, ``calls``, ``excl_cycles``, ``excl_insns``,
         ``incl_cycles``, ``incl_insns``. Walk the parent chain to
         render the tree.
         """

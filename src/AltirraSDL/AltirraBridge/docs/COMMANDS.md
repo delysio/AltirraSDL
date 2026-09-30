@@ -363,9 +363,19 @@ atb_profile_stop(c);
 atb_profile_dump(c, 20);
 ```
 
-**Note:** `PROFILE_DUMP*` is destructive — calling it twice returns
-empty data the second time. Restart the profiler to collect a new
-session.
+Each flat row and call-tree node includes these hexadecimal strings:
+
+- `addr`: the legacy low 16 bits of the record address, e.g. `"$a378"`.
+- `addr24`: the low 24 bits, e.g. `"$01a378"`. For CPU-space records,
+  this is the 65C816 program bank and PC. For global cartridge or PORTB
+  extended-memory records, the bank bits identify the mapped memory bank
+  instead; they must not be interpreted as the CPU program bank.
+- `gaddr`: the full 32-bit profiler record address, e.g. `"$8001a378"`,
+  retaining the address-space tag and mapped-bank information. Use this
+  field to distinguish records across address spaces.
+
+Call `PROFILE_STOP` before either dump command. Results are cached, so
+repeated dumps return the same session; `PROFILE_START` clears that cache.
 
 ## Verifier
 

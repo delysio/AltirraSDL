@@ -19,6 +19,14 @@ if(TARGET AltirraBridgeServer)
 			${CMAKE_CURRENT_SOURCE_DIR}/bridge_custom_device_test.py
 			$<TARGET_FILE:AltirraBridgeServer>
 			${CMAKE_SOURCE_DIR}/src/AltirraSDL/AltirraBridge/sdk/python)
+	add_test(NAME bridge-profile-address
+		COMMAND ${Python3_EXECUTABLE}
+			${CMAKE_CURRENT_SOURCE_DIR}/bridge_profile_address_test.py
+			$<TARGET_FILE:AltirraBridgeServer>
+			${CMAKE_SOURCE_DIR}/src/AltirraSDL/AltirraBridge/sdk/python)
+	set_tests_properties(bridge-profile-address PROPERTIES
+		TIMEOUT 30
+		ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 	set_tests_properties(bridge-custom-device PROPERTIES
 		TIMEOUT 30
 		ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")

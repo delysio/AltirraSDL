@@ -104,6 +104,22 @@ namespace {
 std::string Hex8 (uint32_t v) { char b[8];  std::snprintf(b, sizeof b, "\"$%02x\"", v & 0xff);   return b; }
 std::string Hex16(uint32_t v) { char b[12]; std::snprintf(b, sizeof b, "\"$%04x\"", v & 0xffff); return b; }
 
+// Preserve the legacy 16-bit address and expose the full profiler address.
+// For CPU-space records, the low 24 bits are the 65C816 bank:PC. Global
+// records can instead encode a cartridge or PORTB bank in those bits;
+// gaddr retains the address-space tag needed to interpret them.
+std::string ProfHex24(uint32_t v) {
+	char b[12];
+	std::snprintf(b, sizeof b, "\"$%06x\"", v & 0xffffff);
+	return b;
+}
+
+std::string ProfHex32(uint32_t v) {
+	char b[14];
+	std::snprintf(b, sizeof b, "\"$%08x\"", v);
+	return b;
+}
+
 void AddField(std::string& o, const char* k, const std::string& v) { o += '"';  o += k; o += "\":";  o += v;  o += ','; }
 void AddU32  (std::string& o, const char* k, uint32_t v)           { o += '"';  o += k; o += "\":";  o += std::to_string(v); o += ','; }
 void AddI32  (std::string& o, const char* k, int32_t v)            { o += '"';  o += k; o += "\":";  o += std::to_string(v); o += ','; }
@@ -681,11 +697,12 @@ std::string CmdProfileStart(ATSimulator& sim, const std::vector<std::string>& to
 	ProfileResetCache();
 
 	prof->SetBoundaryRule(kATProfileBoundaryRule_None, 0, 0);
-	prof->SetGlobalAddressesEnabled(true);
 	// Start() calls OpenFrame() internally (profiler.cpp:949) —
 	// calling BeginFrame() afterwards would AdvanceFrame(true),
 	// closing the just-opened frame and discarding its samples.
 	prof->Start(mode, kATProfileCounterMode_None, kATProfileCounterMode_None);
+	// Start() initializes the builder and clears its global-address flag.
+	prof->SetGlobalAddressesEnabled(true);
 
 	std::string payload;
 	AddStr(payload, "mode", modeStr);
@@ -800,6 +817,8 @@ std::string CmdProfileDump(ATSimulator& sim, const std::vector<std::string>& tok
 		arr += '{';
 		std::string e;
 		AddField(e, "addr",   Hex16(rows[i].addr & 0xffff));
+		AddField(e, "addr24", ProfHex24(rows[i].addr));
+		AddField(e, "gaddr",  ProfHex32(rows[i].addr));
 		AddU32  (e, "cycles", (uint32_t)rows[i].cycles);
 		AddU32  (e, "insns",  (uint32_t)rows[i].insns);
 		AddU32  (e, "calls",  (uint32_t)rows[i].calls);
@@ -874,6 +893,8 @@ std::string CmdProfileDumpTree(ATSimulator& sim, const std::vector<std::string>&
 		AddU32  (e, "ctx",               (uint32_t)i);
 		AddU32  (e, "parent",            session.mContexts[i].mParent);
 		AddField(e, "addr",              Hex16(session.mContexts[i].mAddress & 0xffff));
+		AddField(e, "addr24",            ProfHex24(session.mContexts[i].mAddress));
+		AddField(e, "gaddr",             ProfHex32(session.mContexts[i].mAddress));
 		AddU32  (e, "calls",             merged[i].mCalls);
 		AddU32  (e, "excl_cycles",       merged[i].mCycles);
 		AddU32  (e, "excl_insns",        merged[i].mInsns);
