@@ -104,14 +104,21 @@ namespace {
 std::string Hex8 (uint32_t v) { char b[8];  std::snprintf(b, sizeof b, "\"$%02x\"", v & 0xff);   return b; }
 std::string Hex16(uint32_t v) { char b[12]; std::snprintf(b, sizeof b, "\"$%04x\"", v & 0xffff); return b; }
 
-// The profiler's addresses, whole.  A record's address is PC + (K << 16)
-// plus, with global addresses on, the base of the address space the code
-// was fetched from (cartridge bank, extended-memory window, ...).  "addr"
-// stays the 16-bit PC it always was, for existing clients; "addr24" adds
-// the 65C816's program bank, without which code at the same offset in
-// two banks is one row to the reader; "gaddr" is the record's own value.
-static std::string ProfHex24(uint32_t v) { char b[12]; std::snprintf(b, sizeof b, "\"$%06x\"", v & 0xffffff); return b; }
-static std::string ProfHex32(uint32_t v) { char b[14]; std::snprintf(b, sizeof b, "\"$%08x\"", v); return b; }
+// Preserve the legacy 16-bit address and expose the full profiler address.
+// For CPU-space records, the low 24 bits are the 65C816 bank:PC. Global
+// records can instead encode a cartridge or PORTB bank in those bits;
+// gaddr retains the address-space tag needed to interpret them.
+std::string ProfHex24(uint32_t v) {
+	char b[12];
+	std::snprintf(b, sizeof b, "\"$%06x\"", v & 0xffffff);
+	return b;
+}
+
+std::string ProfHex32(uint32_t v) {
+	char b[14];
+	std::snprintf(b, sizeof b, "\"$%08x\"", v);
+	return b;
+}
 
 void AddField(std::string& o, const char* k, const std::string& v) { o += '"';  o += k; o += "\":";  o += v;  o += ','; }
 void AddU32  (std::string& o, const char* k, uint32_t v)           { o += '"';  o += k; o += "\":";  o += std::to_string(v); o += ','; }
@@ -690,11 +697,12 @@ std::string CmdProfileStart(ATSimulator& sim, const std::vector<std::string>& to
 	ProfileResetCache();
 
 	prof->SetBoundaryRule(kATProfileBoundaryRule_None, 0, 0);
-	prof->SetGlobalAddressesEnabled(true);
 	// Start() calls OpenFrame() internally (profiler.cpp:949) —
 	// calling BeginFrame() afterwards would AdvanceFrame(true),
 	// closing the just-opened frame and discarding its samples.
 	prof->Start(mode, kATProfileCounterMode_None, kATProfileCounterMode_None);
+	// Start() initializes the builder and clears its global-address flag.
+	prof->SetGlobalAddressesEnabled(true);
 
 	std::string payload;
 	AddStr(payload, "mode", modeStr);
