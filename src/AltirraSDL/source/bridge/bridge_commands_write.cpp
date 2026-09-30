@@ -1,9 +1,12 @@
 // AltirraBridge - Phase 3 state-write commands (impl)
 //
-// Memory writes use ATSimulator::DebugGlobalWriteByte (the debug-safe
-// path that goes through the underlying-RAM latch without invoking
-// I/O register write handlers — same semantics as the Windows
-// debugger memory pane edit feature).
+// Memory writes use ATSimulator::DebugGlobalWriteByte — the same
+// path the Windows debugger's memory pane edit uses.  Despite the
+// "Debug" prefix it is a real bus write: for a special (I/O) page it
+// reaches ATMemoryManager::CPUExtWriteByte, which runs the layer's
+// write handler.  Altirra's memory manager has no side-effect-free
+// write, so POKE/POKE16/MEMLOAD all carry I/O side effects and the
+// SDK docs say so.
 //
 // Joystick injection uses ATPIAEmulator::AllocInput +
 // ATPIAEmulator::SetInputBits for direction lines and
@@ -31,6 +34,7 @@
 #include "bridge_savestate.h"   // ATBridge::SlotStore + memory I/O
 
 #include "simulator.h"
+#include <at/atcore/address.h>   // kATAddressSpace_CPU: MEMDUMP/MEMLOAD above $FFFF
 #include "cpu.h"              // ATCPUEmulator::GetInsnPC (used by BOOT_BARE settle)
 #include "cpumemory.h"        // ATCPUEmulatorMemory::WriteByte (hardware-register path)
 #include "antic.h"
@@ -100,6 +104,7 @@ bool ParseAddr16(const std::string& tok, uint16_t& addr) {
 // purpose so each file is self-contained. The total LOC is tiny.
 std::string Hex8(uint32_t v)  { char b[8];  std::snprintf(b, sizeof b, "\"$%02x\"",  v & 0xff);   return b; }
 std::string Hex16(uint32_t v) { char b[12]; std::snprintf(b, sizeof b, "\"$%04x\"",  v & 0xffff); return b; }
+std::string Hex24(uint32_t v) { char b[12]; std::snprintf(b, sizeof b, "\"$%06x\"",  v & 0xffffff); return b; }
 std::string Hex64(uint64_t v) { char b[24]; std::snprintf(b, sizeof b, "\"$%016llx\"", (unsigned long long)v); return b; }
 
 // key=value option parsing -- mirrors the helpers in
@@ -1239,9 +1244,10 @@ std::string CmdPoke(ATSimulator& sim, const std::vector<std::string>& tokens) {
 	if (value > 0xFF)
 		return JsonError("POKE: value > $FF");
 
-	// DebugGlobalWriteByte writes the underlying RAM latch, bypassing
-	// I/O register write handlers (no ANTIC/GTIA/POKEY side effects).
-	// Address space 0 (kATAddressSpace_CPU) is the default.
+	// A real bus write in the CPU's view of memory, addressed in bank 0
+	// — address space 0 (kATAddressSpace_CPU) is the default.  Writing
+	// an I/O page runs that chip's write handler, exactly as a `STA
+	// $Dxxx` would; there is no quieter write path in the core.
 	sim.DebugGlobalWriteByte((uint32_t)addr, (uint8_t)value);
 
 	std::string payload;
@@ -1254,18 +1260,18 @@ std::string CmdPoke(ATSimulator& sim, const std::vector<std::string>& tokens) {
 // ---------------------------------------------------------------------------
 // HWPOKE addr value
 //
-// Same parameters as POKE, but routes the write through the real
-// CPU bus (ATCPUEmulatorMemory::WriteByte) instead of the debug
-// RAM latch. For addresses in the $D000-$D7FF I/O range this
-// actually hits the ANTIC / GTIA / POKEY / PIA write handlers,
-// with the same cycle-accurate effect a running 6502 `STA` would
-// have.
+// Same parameters as POKE, and the same kind of write: both reach
+// the ANTIC / GTIA / POKEY / PIA write handlers for $D000-$D7FF.
+// They differ only in the bank they address — POKE forces bank 0
+// (ATMemoryManager::ExtWriteByte with an explicit bank), HWPOKE uses
+// the bank the CPU is currently executing in
+// (ATCPUEmulatorMemory::WriteByte, the current page map).  On a 6502
+// or 65C02 the two are equivalent.
 //
-// Use POKE for RAM writes that must be debug-safe (no side
-// effects). Use HWPOKE for hardware register writes from a
-// bare-metal client that has parked the CPU and wants to drive
-// ANTIC/GTIA directly — the normal case is 04_paint's
-// setup_machine writing $D400/$D402/$D403 and $D016..$D01A.
+// HWPOKE stays as the name a bare-metal client reaches for when it
+// has parked the CPU and wants to drive ANTIC/GTIA directly — the
+// normal case is 04_paint's setup_machine writing $D400/$D402/$D403
+// and $D016..$D01A.
 // ---------------------------------------------------------------------------
 
 std::string CmdHwPoke(ATSimulator& sim, const std::vector<std::string>& tokens) {
@@ -1323,13 +1329,21 @@ std::string CmdPoke16(ATSimulator& sim, const std::vector<std::string>& tokens) 
 // per-server filesystem paths; we always use inline so the same
 // command works over `adb forward` on Android. Cap matches PEEK
 // (16384 bytes) by default; can be raised if a use case appears.
+//
+// An address above $FFFF is a 24-bit address in the 65C816's linear
+// space -- bank in the high byte -- read through the memory manager's
+// banked debug path (ATSimulator::DebugGlobalReadByte, address space
+// CPU), which is the CPU's own view of that bank: an accelerator's
+// fast RAM included.  A range may cross a bank there; it may not cross
+// $FFFFFF.  Addresses in bank 0 keep the 16-bit path and its rules, so
+// nothing that read bank 0 before reads differently now.
 // ---------------------------------------------------------------------------
 
 std::string CmdMemDump(ATSimulator& sim, const std::vector<std::string>& tokens) {
 	if (tokens.size() < 3)
 		return JsonError("MEMDUMP: usage: MEMDUMP addr length");
-	uint16_t addr = 0;
-	if (!ParseAddr16(tokens[1], addr))
+	uint32_t addr = 0;
+	if (!ParseUint(tokens[1], addr) || addr > 0xFFFFFFu)
 		return JsonError("MEMDUMP: bad address");
 	uint32_t length = 0;
 	if (!ParseUint(tokens[2], length))
@@ -1338,15 +1352,19 @@ std::string CmdMemDump(ATSimulator& sim, const std::vector<std::string>& tokens)
 		return JsonError("MEMDUMP: length must be >= 1");
 	if (length > 65536u)
 		return JsonError("MEMDUMP: length too large (max 65536)");
-	if ((uint32_t)addr + length > 0x10000u)
+	const bool wide = addr > 0xFFFFu;
+	if (!wide && addr + length > 0x10000u)
 		return JsonError("MEMDUMP: range crosses end of 64K address space");
+	if (wide && addr + length > 0x1000000u)
+		return JsonError("MEMDUMP: range crosses end of 24-bit address space");
 
 	std::vector<uint8_t> buf(length);
 	for (uint32_t i = 0; i < length; ++i)
-		buf[i] = sim.DebugReadByte((uint16_t)(addr + i));
+		buf[i] = wide ? sim.DebugGlobalReadByte(kATAddressSpace_CPU + addr + i)
+		              : sim.DebugReadByte((uint16_t)(addr + i));
 
 	std::string payload;
-	AddField(payload, "addr",   Hex16(addr));
+	AddField(payload, "addr",   wide ? Hex24(addr) : Hex16(addr));
 	AddU32  (payload, "length", length);
 	payload += "\"format\":\"base64\",";
 	payload += "\"data\":\"";
@@ -1359,29 +1377,35 @@ std::string CmdMemDump(ATSimulator& sim, const std::vector<std::string>& tokens)
 // MEMLOAD addr base64
 //
 // Inline-only for now (matches MEMDUMP). The base64 data must be the
-// 3rd token. The bytes are written via DebugGlobalWriteByte so I/O
-// register side effects are NOT triggered.
+// 3rd token. The bytes go through DebugGlobalWriteByte, the same
+// write path as POKE, so a payload overlapping an I/O page triggers
+// that page's write handlers.
 // ---------------------------------------------------------------------------
 
 std::string CmdMemLoad(ATSimulator& sim, const std::vector<std::string>& tokens) {
 	if (tokens.size() < 3)
 		return JsonError("MEMLOAD: usage: MEMLOAD addr base64data");
-	uint16_t addr = 0;
-	if (!ParseAddr16(tokens[1], addr))
+	// A 24-bit address writes the 65C816's linear space, as MEMDUMP
+	// reads it; the write path was global already.
+	uint32_t addr = 0;
+	if (!ParseUint(tokens[1], addr) || addr > 0xFFFFFFu)
 		return JsonError("MEMLOAD: bad address");
 	std::vector<uint8_t> bytes;
 	if (!Base64Decode(tokens[2], bytes))
 		return JsonError("MEMLOAD: bad base64 payload");
 	if (bytes.empty())
 		return JsonError("MEMLOAD: empty payload");
-	if ((uint32_t)addr + bytes.size() > 0x10000u)
+	const bool wide = addr > 0xFFFFu;
+	if (!wide && addr + bytes.size() > 0x10000u)
 		return JsonError("MEMLOAD: payload exceeds 64K address space");
+	if (wide && addr + bytes.size() > 0x1000000u)
+		return JsonError("MEMLOAD: payload exceeds 24-bit address space");
 
 	for (size_t i = 0; i < bytes.size(); ++i)
-		sim.DebugGlobalWriteByte((uint32_t)(addr + i), bytes[i]);
+		sim.DebugGlobalWriteByte(kATAddressSpace_CPU + (uint32_t)(addr + i), bytes[i]);
 
 	std::string payload;
-	AddField(payload, "addr",   Hex16(addr));
+	AddField(payload, "addr",   wide ? Hex24(addr) : Hex16(addr));
 	AddU32  (payload, "length", (uint32_t)bytes.size());
 	StripTrailingComma(payload);
 	return JsonOk(payload);
