@@ -6,35 +6,11 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <imgui.h>
-#include <algorithm>
 
-// Configuration dialogs open within the visible canvas, including when
-// their preferred desktop size exceeds the current window dimensions.
-inline ImVec2 ATUIFitDialogSize(ImVec2 preferred) {
-	const ImVec2 available = ImGui::GetMainViewport()->WorkSize;
-	return ImVec2(
-		std::min(preferred.x, std::max(1.0f, available.x - 32.0f)),
-		std::min(preferred.y, std::max(1.0f, available.y - 32.0f)));
-}
-
-// Keep open search/profile dialogs reachable after leaving fullscreen or
-// shrinking the main window. Call constraints before Begin, clamp after.
-inline void ATUIConstrainDialogSize() {
-	const ImVec2 maximum = ATUIFitDialogSize(ImVec2(100000, 100000));
-	ImGui::SetNextWindowSizeConstraints(
-		ImVec2(std::min(300.0f, maximum.x), std::min(180.0f, maximum.y)), maximum);
-}
-
-inline void ATUIClampDialogPosition() {
-	const ImGuiViewport *viewport = ImGui::GetMainViewport();
-	const ImVec2 size = ImGui::GetWindowSize();
-	const ImVec2 pos = ImGui::GetWindowPos();
-	const ImVec2 minimum(viewport->WorkPos.x + 16, viewport->WorkPos.y + 16);
-	const ImVec2 maximum(std::max(minimum.x, viewport->WorkPos.x + viewport->WorkSize.x - size.x - 16),
-		std::max(minimum.y, viewport->WorkPos.y + viewport->WorkSize.y - size.y - 16));
-	ImGui::SetWindowPos(ImVec2(std::clamp(pos.x, minimum.x, maximum.x),
-		std::clamp(pos.y, minimum.y, maximum.y)));
-}
+// Configuration dialog geometry helpers implemented by the SDL UI.
+ImVec2 ATUIFitDialogSize(ImVec2 preferred);
+void ATUIConstrainDialogSize();
+void ATUIClampDialogPosition();
 
 struct SDL_Window;
 struct SDL_Renderer;

@@ -10,7 +10,7 @@ import re
 
 
 def generate(source):
-    dispatcher = (source / "ui/sysconfig/ui_system.cpp").read_text()
+    dispatcher = (source / "ui/sysconfig/ui_system.cpp").read_text(encoding="utf-8")
     enum = re.search(r"enum\s*\{(.*?)\};", dispatcher, re.S)[1]
     names = re.findall(r"\b(kCat_\w+)\s*[,=]", enum)
     ids = {name: i for i, name in enumerate(names)}
@@ -35,13 +35,13 @@ def generate(source):
         "Speed": "fast slow turbo warp pacing",
         "EaseOfUse": "rewind pause inactive background",
     }
-    sources = "\n".join(p.read_text() for folder in ("ui/sysconfig", "ui/firmware", "ui/core")
+    sources = "\n".join(p.read_text(encoding="utf-8") for folder in ("ui/sysconfig", "ui/firmware", "ui/core")
                         for p in sorted((source / folder).glob("*.cpp")))
     rows = []
     # Device menu labels are data-driven, not literal ImGui calls. Index the
     # same catalog used by Add Device, including tags and descriptions, and
     # lead the user to the existing Add Device control without adding hardware.
-    device_source = (source / "ui/sysconfig/ui_system_pages_b.cpp").read_text()
+    device_source = (source / "ui/sysconfig/ui_system_pages_b.cpp").read_text(encoding="utf-8")
     literal = r'"((?:[^"\\]|\\.)*)"'
     device_arrays = dict(re.findall(
         r'static const DeviceCatalogEntry (\w+)\[\]\s*=\s*\{(.*?)\n\};',
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     content = generate(args.source)
-    if not args.output.exists() or args.output.read_text() != content:
-        args.output.write_text(content)
+    if not args.output.exists() or args.output.read_text(encoding="utf-8") != content:
+        args.output.write_text(content, encoding="utf-8")
     else:
         args.output.touch()
