@@ -35,6 +35,7 @@
 #include <at/ataudio/pokey.h>
 
 #include "ui_main.h"
+#include "ui_guided_input.h"
 #include "ui_search.h"
 #include "ui_profile_services.h"
 #include "ui_menus_internal.h"
@@ -1238,6 +1239,15 @@ static void BuildInputMenu(NSMenu *menu) {
 		for (int portIdx = 0; portIdx < 4; ++portIdx) {
 			NSMenu *portMenu = AddSubmenu(menu,
 				[NSString stringWithFormat:@"Port %d", portIdx + 1]);
+			// Fork extension, matching the ImGui Port 1/2 entry points.
+			if (portIdx < 2) {
+				const int guidedPort = portIdx;
+				AddItem(portMenu, @"Guided Joystick Setup...", false,
+					!pIM->Is5200Mode(), [=]{
+					ATUIOpenGuidedJoystickSetup(guidedPort);
+				});
+				AddSeparator(portMenu);
+			}
 
 			// Collect input maps for this port
 			struct MapEntry { ATInputMap *map; VDStringA name; bool active; };

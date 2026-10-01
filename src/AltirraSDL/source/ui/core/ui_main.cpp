@@ -39,6 +39,7 @@
 #include <at/atcore/serializable.h>
 
 #include "ui_main.h"
+#include "ui_guided_input.h"
 #include "ui/dialogs/ui_game_metadata.h"
 #include "ui/gamelibrary/game_library.h"
 
@@ -1924,7 +1925,8 @@ static void ATUIQuickBarSameLine() {
 }
 
 static bool ATUIQuickBarSuppressedByDialog(const ATUIState& state) {
-	return ATUIIsFileDialogPaused() || state.fileDialogPending ||
+	return ATUIIsGuidedJoystickSetupOpen() ||
+		ATUIIsFileDialogPaused() || state.fileDialogPending ||
 		state.showExitConfirm ||
 		state.showSystemConfig ||
 		state.showDiskManager ||
@@ -2321,6 +2323,7 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showAudioOptions)      ATUIRenderAudioOptionsDialog(state);
 	if (state.showInputMappings)     ATUIRenderInputMappings(sim, state);
 	if (state.showInputSetup)        ATUIRenderInputSetup(sim, state);
+	ATUIRenderGuidedJoystickSetup(sim);
 	if (state.showAboutDialog)       ATUIRenderAboutDialog(state);
 	if (state.showDebugLog) {
 		extern void ATUIRenderDebugLogDialog(ATUIState &state);

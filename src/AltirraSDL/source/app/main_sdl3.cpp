@@ -73,6 +73,8 @@ extern "C" bool ATWasmBrokerIsActive();
 #include "display_backend_sdl.h"
 #include "gl_funcs.h"
 #include "input_sdl3.h"
+#include "input_capture.h"
+#include "ui_guided_input.h"
 #include "input_selection.h"
 #include "touch_controls.h"
 #include "touch_widgets.h"
@@ -447,15 +449,18 @@ static void ATPersistAllForSuspend() {
 }
 
 static void HandleEvents() {
+	ATInputCapture::Update(static_cast<ATJoystickManagerSDL3 *>(
+		g_sim.GetJoystickManager()));
 	// ImGui reports keyboard capture for every focused debugger window,
 	// including the Display pane's invisible interaction surface. Match the
 	// native UI: keyboard input belongs to the emulator when Display has
 	// focus, and to the debugger when another debugger pane has focus.
 	const uint32 debuggerKeyboardPane =
 		ATUIDebuggerGetKeyboardFocusPaneId();
-	const bool routeKeyboardToEmulator = debuggerKeyboardPane
-		? debuggerKeyboardPane == kATUIPaneId_Display
-		: !ATUIWantCaptureKeyboard();
+	const bool routeKeyboardToEmulator = !ATUIIsGuidedJoystickSetupOpen()
+		&& (debuggerKeyboardPane
+			? debuggerKeyboardPane == kATUIPaneId_Display
+			: !ATUIWantCaptureKeyboard());
 	const bool uiOwnsKeyboard = !routeKeyboardToEmulator;
 
 	// Detect when the UI starts owning the keyboard (e.g. a menu or debugger
@@ -488,11 +493,16 @@ static void HandleEvents() {
 			ev.key.key      = SDLK_ESCAPE;
 		}
 
+		// Binding capture owns physical input before shortcuts or UI handlers.
+		if (ATInputCapture::HandleEvent(ev))
+			continue;
+
 		// Emote picker open-shortcut: R3 (right stick click) while a
 		// netplay lockstep session is live.  Runs before any other
 		// gamepad dispatch so the UI opens even in Gaming Mode.
 		if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
 			&& ev.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK
+			&& !ATUIIsGuidedJoystickSetupOpen()
 			&& ATNetplayGlue::IsLockstepping())
 		{
 			ATEmotePicker::Open();
@@ -502,7 +512,7 @@ static void HandleEvents() {
 		// Gaming Mode global bindings. In particular, LB/RB are Shift/Control
 		// here; allowing ATMobileGamepad_HandleEvent() to see them first would
 		// open the hamburger or toggle pause instead.
-		if (g_uiState.showVirtualKeyboard
+		if (!ATUIIsGuidedJoystickSetupOpen() && g_uiState.showVirtualKeyboard
 			&& (!ATUIIsGamingMode()
 				|| g_mobileState.currentScreen == ATMobileUIScreen::None))
 		{
@@ -519,7 +529,7 @@ static void HandleEvents() {
 		}
 
 		// Route touch/gamepad events to Gaming Mode UI before ImGui
-		if (ATUIIsGamingMode()) {
+		if (ATUIIsGamingMode() && !ATUIIsGuidedJoystickSetupOpen()) {
 			if (ATMobileGamepad_HandleEvent(ev, g_sim, g_mobileState))
 				continue;
 			if (ATMobileUI_HandleEvent(ev, g_mobileState))
@@ -562,7 +572,7 @@ static void HandleEvents() {
 		{
 			bool mobileUIActive = ATUIIsGamingMode()
 				&& (g_mobileState.currentScreen != ATMobileUIScreen::None);
-			if (!mobileUIActive) {
+			if (!mobileUIActive && !ATUIIsGuidedJoystickSetupOpen()) {
 				if (!g_uiState.showVirtualKeyboard
 					&& ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
 					&& ev.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) {
@@ -633,7 +643,7 @@ static void HandleEvents() {
 				// Accelerator table dispatch (matches Windows ATUIActivateVirtKeyMapping)
 				// Priority: Global → Debugger → Display
 				bool handled = false;
-				if (!gamingScreenOpen && !ev.key.repeat) {
+				if (!gamingScreenOpen && !ATUIIsGuidedJoystickSetupOpen() && !ev.key.repeat) {
 					handled = ATUISDLActivateAccelKey(ev.key, false, kATUIAccelContext_Global);
 
 					if (!handled
@@ -674,7 +684,7 @@ static void HandleEvents() {
 			// Skip when a gaming mode screen owns the keyboard (matches KEY_DOWN guard).
 			bool gamingScreenOpenUp = ATUIIsGamingMode()
 				&& g_mobileState.currentScreen != ATMobileUIScreen::None;
-			if (!gamingScreenOpenUp) {
+			if (!gamingScreenOpenUp && !ATUIIsGuidedJoystickSetupOpen()) {
 				ATUISDLActivateAccelKey(ev.key, true, kATUIAccelContext_Global);
 				if (debuggerKeyboardPane
 					&& debuggerKeyboardPane != kATUIPaneId_Display)
@@ -683,7 +693,7 @@ static void HandleEvents() {
 					ATUISDLActivateAccelKey(ev.key, true, kATUIAccelContext_Display);
 			}
 
-			if (routeKeyboardToEmulator) {
+			if (routeKeyboardToEmulator && !ATUIIsGuidedJoystickSetupOpen()) {
 				// Suppress emulator key-up for keys bound in accel tables
 				// (replaces hardcoded F1/F5/F7/.../F12 list)
 				uint32 upVk = SDLScancodeToVK(ev.key.scancode);
@@ -696,7 +706,7 @@ static void HandleEvents() {
 		case SDL_EVENT_TEXT_INPUT:
 			if (ATUIDebuggerHandleTextInput(ev.text.text))
 				break;
-			if (routeKeyboardToEmulator)
+			if (routeKeyboardToEmulator && !ATUIIsGuidedJoystickSetupOpen())
 				ATInputSDL3_HandleTextInput(ev.text.text);
 			break;
 
@@ -3356,6 +3366,8 @@ int main(int argc, char *argv[]) {
 
 	// Detach and destroy joystick manager before simulator shutdown
 	// (must be after ATSaveSettings which reads joystick transforms)
+	ATUIShutdownGuidedJoystickSetup();
+	ATInputCapture::Shutdown();
 	if (g_pJoystickMgr) {
 		g_sim.SetJoystickManager(nullptr);
 		g_pJoystickMgr->Shutdown();

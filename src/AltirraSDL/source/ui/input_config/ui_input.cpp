@@ -20,6 +20,7 @@
 #include <vd2/system/registry.h>
 
 #include "ui_main.h"
+#include "ui_guided_input.h"
 #include "simulator.h"
 #include "inputmanager.h"
 #include "inputmap.h"
@@ -2321,8 +2322,8 @@ void ATUIRenderInputMappings(ATSimulator &sim, ATUIState &state) {
 	if (g_selectedMapIndex >= (int)mapCount)
 		g_selectedMapIndex = (int)mapCount - 1;
 
-	// Reserve space for bottom buttons (2 rows + separator)
-	float footerHeight = ImGui::GetFrameHeightWithSpacing() * 2
+	// Reserve space for bottom buttons (3 rows + separator)
+	float footerHeight = ImGui::GetFrameHeightWithSpacing() * 3
 		+ ImGui::GetStyle().ItemSpacing.y + 4.0f;
 
 	// Maps table
@@ -2440,6 +2441,14 @@ void ATUIRenderInputMappings(ATSimulator &sim, ATUIState &state) {
 
 	// Action buttons
 	bool hasSelection = (g_selectedMapIndex >= 0 && g_selectedMapIndex < (int)mapCount);
+
+	// Fork extension: guided setup produces/reuses ordinary editable maps.
+	ImGui::BeginDisabled(pIM->Is5200Mode() || g_showEditInputMap);
+	if (ImGui::Button("Guided Joystick Setup..."))
+		ATUIOpenGuidedJoystickSetup();
+	ImGui::EndDisabled();
+	if (pIM->Is5200Mode() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip("CX40 joystick setup is for Atari computer modes. Use the 5200 controller maps in Input Mappings.");
 
 	if (ImGui::Button("Add")) {
 		vdrefptr<ATInputMap> newMap(new ATInputMap);

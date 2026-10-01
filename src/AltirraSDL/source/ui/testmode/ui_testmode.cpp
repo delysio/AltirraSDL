@@ -40,6 +40,8 @@
 #include "oshelper.h"
 #include "inputmanager.h"
 #include "inputdefs.h"
+#include "inputmap.h"
+#include "input_capture.h"
 #include "ui/debugger/ui_debugger.h"
 #include "netplay/netplay_input.h"
 #ifdef ALTIRRA_NETPLAY_ENABLED
@@ -58,6 +60,8 @@ extern void ATConsoleExecuteCommand(const char *s, bool echo);
 // =========================================================================
 
 static TestModeIPC g_ipc;
+static std::vector<SDL_Joystick *> g_virtualTestControllers;
+static SDL_Keymod g_physicalTestMods = SDL_KMOD_NONE;
 static std::string g_ipcAddress;   // socket path or pipe name (for display)
 static std::string g_recvBuf;      // accumulates partial reads
 static std::string g_sendBuf;      // accumulates responses to flush
@@ -2237,6 +2241,128 @@ static std::string DispatchCommand(std::string cmd, ATSimulator &sim, ATUIState 
 		return json;
 	}
 
+	// Physical-event regression helpers exercise SDL routing, not just ImGui
+	// navigation or direct emulated joystick injection.
+	if (verb == "physical_focus") {
+		const std::string direction = NextToken(cmd);
+		if (direction != "lost" && direction != "gained")
+			return JsonError("usage: physical_focus <lost|gained>");
+		SDL_Event event {};
+		event.type = direction == "lost"
+			? SDL_EVENT_WINDOW_FOCUS_LOST : SDL_EVENT_WINDOW_FOCUS_GAINED;
+		event.window.windowID = g_pWindow ? SDL_GetWindowID(g_pWindow) : 0;
+		return SDL_PushEvent(&event) ? JsonOk() : JsonError(SDL_GetError());
+	}
+	if (verb == "physical_key") {
+		const std::string direction = NextToken(cmd);
+		const std::string name = RestOfLine(cmd);
+		const SDL_Scancode sc = SDL_GetScancodeFromName(name.c_str());
+		if ((direction != "down" && direction != "up") || sc == SDL_SCANCODE_UNKNOWN)
+			return JsonError("usage: physical_key <down|up> <SDL scancode name>");
+		const bool down = direction == "down";
+		SDL_Keymod bit = SDL_KMOD_NONE;
+		if (sc == SDL_SCANCODE_LSHIFT) bit = SDL_KMOD_LSHIFT;
+		if (sc == SDL_SCANCODE_RSHIFT) bit = SDL_KMOD_RSHIFT;
+		if (sc == SDL_SCANCODE_LCTRL) bit = SDL_KMOD_LCTRL;
+		if (sc == SDL_SCANCODE_RCTRL) bit = SDL_KMOD_RCTRL;
+		g_physicalTestMods = down ? (SDL_Keymod)(g_physicalTestMods | bit)
+			: (SDL_Keymod)(g_physicalTestMods & ~bit);
+		SDL_Event event {};
+		event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+		event.key.windowID = g_pWindow ? SDL_GetWindowID(g_pWindow) : 0;
+		event.key.scancode = sc;
+		event.key.key = SDL_GetKeyFromScancode(sc, g_physicalTestMods, false);
+		event.key.mod = g_physicalTestMods;
+		event.key.down = down;
+		return SDL_PushEvent(&event) ? JsonOk() : JsonError(SDL_GetError());
+	}
+	if (verb == "virtual_controller") {
+		const std::string action = NextToken(cmd);
+		if (action == "attach") {
+			const bool gamepad = NextToken(cmd) == "gamepad";
+			SDL_VirtualJoystickDesc desc;
+			SDL_INIT_INTERFACE(&desc);
+			desc.type = gamepad ? SDL_JOYSTICK_TYPE_GAMEPAD : SDL_JOYSTICK_TYPE_UNKNOWN;
+			desc.naxes = gamepad ? SDL_GAMEPAD_AXIS_COUNT : 4;
+			desc.nbuttons = gamepad ? SDL_GAMEPAD_BUTTON_COUNT : 11;
+			desc.nhats = gamepad ? 0 : 1;
+			desc.name = gamepad ? "Guided test gamepad" : "Guided test joystick";
+			desc.axis_mask = (1u << desc.naxes) - 1;
+			desc.button_mask = (1u << desc.nbuttons) - 1;
+			const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
+			if (!id) return JsonError(SDL_GetError());
+			SDL_Joystick *joystick = SDL_OpenJoystick(id);
+			if (!joystick) {
+				SDL_DetachVirtualJoystick(id);
+				return JsonError(SDL_GetError());
+			}
+			if (gamepad) {
+				SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+				SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+			}
+			g_virtualTestControllers.push_back(joystick);
+			return "{\"ok\":true,\"index\":"
+				+ std::to_string(g_virtualTestControllers.size() - 1) + "}";
+		}
+		const int device = atoi(NextToken(cmd).c_str());
+		if (device < 0 || device >= (int)g_virtualTestControllers.size()
+			|| !g_virtualTestControllers[device])
+			return JsonError("virtual controller not found");
+		SDL_Joystick *joystick = g_virtualTestControllers[device];
+		if (action == "detach") {
+			const SDL_JoystickID id = SDL_GetJoystickID(joystick);
+			SDL_CloseJoystick(joystick);
+			g_virtualTestControllers[device] = nullptr;
+			return SDL_DetachVirtualJoystick(id) ? JsonOk() : JsonError(SDL_GetError());
+		}
+		const int index = atoi(NextToken(cmd).c_str());
+		const int value = atoi(NextToken(cmd).c_str());
+		bool ok = false;
+		if (action == "axis") ok = SDL_SetJoystickVirtualAxis(joystick, index, (Sint16)value);
+		if (action == "button") ok = SDL_SetJoystickVirtualButton(joystick, index, value != 0);
+		if (action == "hat") ok = SDL_SetJoystickVirtualHat(joystick, index, (Uint8)value);
+		return ok ? JsonOk() : JsonError(SDL_GetError());
+	}
+	if (verb == "input_map_add_binding") {
+		const uint32 mapIndex = (uint32)atoi(NextToken(cmd).c_str());
+		const uint32 controller = (uint32)atoi(NextToken(cmd).c_str());
+		const uint32 source = (uint32)strtoul(NextToken(cmd).c_str(), nullptr, 0);
+		const uint32 target = (uint32)strtoul(NextToken(cmd).c_str(), nullptr, 0);
+		ATInputManager *im = sim.GetInputManager();
+		vdrefptr<ATInputMap> map;
+		if (!im || !im->GetInputMapByIndex(mapIndex, ~map)
+			|| controller >= map->GetControllerCount())
+			return JsonError("input map or controller not found");
+		const bool enabled = im->IsInputMapEnabled(map);
+		im->ActivateInputMap(map, false);
+		map->AddMapping(source, controller, target);
+		im->ActivateInputMap(map, enabled);
+		return JsonOk();
+	}
+	if (verb == "input_maps") {
+		ATInputManager *im = sim.GetInputManager();
+		std::string json = std::string("{\"ok\":true,\"capturing\":")
+			+ (ATInputCapture::IsActive() ? "true" : "false") + ",\"maps\":[";
+		for (uint32 i = 0; im && i < im->GetInputMapCount(); ++i) {
+			vdrefptr<ATInputMap> map;
+			if (!im->GetInputMapByIndex(i, ~map)) continue;
+			if (i) json += ',';
+			json += "{\"name\":\"" + JsonEscape(VDTextWToU8(map->GetName(), -1).c_str())
+				+ "\",\"enabled\":" + (im->IsInputMapEnabled(map) ? "true" : "false")
+				+ ",\"unit\":" + std::to_string(map->GetSpecificInputUnit()) + ",\"bindings\":[";
+			for (uint32 m = 0; m < map->GetMappingCount(); ++m) {
+				const auto& binding = map->GetMapping(m);
+				const auto& controller = map->GetController(binding.mControllerId);
+				if (m) json += ',';
+				json += "{\"input\":" + std::to_string(binding.mInputCode)
+					+ ",\"target\":" + std::to_string(binding.mCode)
+					+ ",\"port\":" + std::to_string(controller.mIndex) + "}";
+			}
+			json += "]}";
+		}
+		return json + "]}";
+	}
+
 	// --- Interactions ---
 	if (verb == "send_text") {
 		std::string text = RestOfLine(cmd);
@@ -2759,6 +2885,11 @@ static std::string DispatchCommand(std::string cmd, ATSimulator &sim, ATUIState 
 			"\"source_command <run|step_into|step_over|step_out> <pc|-> <utf8_path>\","
 			"\"export_debugger_help [utf8_path]\","
 			"\"list_items [window_filter]\","
+			"\"input_maps\","
+			"\"input_map_add_binding <map index> <controller index> <source code> <target code>\","
+			"\"physical_key <down|up> <SDL scancode name>\","
+			"\"physical_focus <lost|gained>\","
+			"\"virtual_controller <attach raw|attach gamepad|detach N|axis N I V|button N I V|hat N I V>\","
 			"\"list_dialogs\","
 			"\"open_dialog <name>\","
 			"\"close_dialog <name>\","
@@ -3035,6 +3166,15 @@ bool ATTestModeInit() {
 void ATTestModeShutdown() {
 	if (!g_testModeEnabled)
 		return;
+
+	for (SDL_Joystick *joystick : g_virtualTestControllers) {
+		if (!joystick) continue;
+		const SDL_JoystickID id = SDL_GetJoystickID(joystick);
+		SDL_CloseJoystick(joystick);
+		SDL_DetachVirtualJoystick(id);
+	}
+	g_virtualTestControllers.clear();
+	g_physicalTestMods = SDL_KMOD_NONE;
 
 	// Disable hooks
 	ImGuiContext *ctx = ImGui::GetCurrentContext();

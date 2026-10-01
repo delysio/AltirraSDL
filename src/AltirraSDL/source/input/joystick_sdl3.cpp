@@ -115,6 +115,7 @@ struct ATControllerSDL3 {
 	int mUnit = -1;			// ATInputManager unit ID
 	ATInputUnitIdentifier mId {};
 	bool mbMarked = false;	// mark-and-sweep flag for RescanForDevices()
+	bool mbBindingReleasePending = false;
 
 	// Previous frame state for delta detection
 	uint32 mLastButtons = 0;		// 11 button bits (XInput order)
@@ -160,6 +161,9 @@ public:
 	uint32 GetJoystickPortStates() const override;
 
 	void CloseGamepad(SDL_JoystickID id) override;
+	void SetBindingCapture(bool capture) override;
+	const ATJoystickState *GetBindingStates(uint32& count) override;
+	bool GetBindingName(int unit, uint32 code, VDStringW& name) override;
 
 private:
 	void OpenDevice(SDL_JoystickID id);
@@ -181,6 +185,7 @@ private:
 	ATJoystickTransforms mTransforms {};
 	vdfunction<void()> mOnActivity;
 	bool mbCaptureMode = false;
+	bool mbBindingCapture = false;
 
 	vdfastvector<ATControllerSDL3 *> mControllers;
 	vdfastvector<ATJoystickState> mCaptureStates;
@@ -499,7 +504,7 @@ IATJoystickManager::PollResult ATJoystickManagerSDL3Impl::Poll() {
 	// to bind).  PollForCapture() is the only path that may read devices
 	// during capture mode, and it reads live state — so we deliberately
 	// do not touch mLast* here.
-	if (mbCaptureMode || mControllers.empty())
+	if (mbCaptureMode || mbBindingCapture || mControllers.empty())
 		return kPollResult_NoControllers;
 
 	if (ATUIIsGamingMode() && ATMobileGamepad_IsUIOwning()) {
@@ -555,6 +560,18 @@ void ATJoystickManagerSDL3Impl::PollController(ATControllerSDL3& ctrl, bool& act
 		ReadGamepadState(ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
 	else
 		ReadRawJoystickState(ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
+
+	// Cancelling capture while holding a control must not press it in the
+	// emulator. Resume this device only after its digital controls release.
+	if (ctrl.mbBindingReleasePending) {
+		if (buttonStates || axisButtonStates)
+			return;
+		for (sint32 axis : deadVals) {
+			if (axis)
+				return;
+		}
+		ctrl.mbBindingReleasePending = false;
+	}
 
 	if (ATUIIsGamingMode() && ctrl.mbIsGamepad) {
 		// Gaming Mode reserves B/X/Y and shoulder/system buttons for UI
@@ -901,6 +918,106 @@ const ATJoystickState *ATJoystickManagerSDL3Impl::PollForCapture(uint32& n) {
 
 	n = (uint32)mCaptureStates.size();
 	return mCaptureStates.empty() ? nullptr : mCaptureStates.data();
+}
+
+void ATJoystickManagerSDL3Impl::SetBindingCapture(bool capture) {
+	if (mbBindingCapture == capture)
+		return;
+	mbBindingCapture = capture;
+	// Capture snapshots have separate history. Explicitly release gameplay
+	// state on entry and reset its history so the next press is reported.
+	if (capture && mpInputManager) {
+		mpInputManager->ReleaseButtons(kATInputCode_JoyClass, 0xFFFF);
+		for (auto *ctrl : mControllers) {
+			if (ctrl->mUnit < 0)
+				continue;
+			for (int axis = 0; axis < 6; ++axis)
+				mpInputManager->OnAxisInput(ctrl->mUnit,
+					kATInputCode_JoyHoriz1 + axis, 0, 0);
+		}
+	}
+	for (auto *ctrl : mControllers) {
+		ctrl->mLastButtons = 0;
+		ctrl->mLastAxisButtons = 0;
+		memset(ctrl->mLastAxisVals, 0, sizeof(ctrl->mLastAxisVals));
+		memset(ctrl->mLastDeadAxisVals, 0, sizeof(ctrl->mLastDeadAxisVals));
+		ctrl->mbBindingReleasePending = !capture;
+	}
+}
+
+const ATJoystickState *ATJoystickManagerSDL3Impl::GetBindingStates(uint32& count) {
+	mCaptureStates.clear();
+	for (auto *ctrl : mControllers) {
+		if (ctrl->mUnit < 0)
+			continue;
+		ATJoystickState state {};
+		state.mUnit = ctrl->mUnit;
+		if (ctrl->mpGamepad)
+			ReadGamepadState(*ctrl, state.mButtons, state.mAxisButtons,
+				state.mAxisVals, state.mDeadifiedAxisVals);
+		else if (ctrl->mpJoystick)
+			ReadRawJoystickState(*ctrl, state.mButtons, state.mAxisButtons,
+				state.mAxisVals, state.mDeadifiedAxisVals);
+		else
+			continue;
+		mCaptureStates.push_back(state);
+	}
+	count = (uint32)mCaptureStates.size();
+	return mCaptureStates.empty() ? nullptr : mCaptureStates.data();
+}
+
+bool ATJoystickManagerSDL3Impl::GetBindingName(int unit, uint32 code,
+	VDStringW& name)
+{
+	ATControllerSDL3 *device = nullptr;
+	for (auto *ctrl : mControllers) {
+		if (ctrl->mUnit == unit) {
+			device = ctrl;
+			break;
+		}
+	}
+	if (!device)
+		return false;
+	if (code >= kATInputCode_JoyButton0 && code < kATInputCode_JoyButton0 + 11) {
+		const int button = (int)(code - kATInputCode_JoyButton0);
+		if (!device->mbIsGamepad) {
+			name.sprintf(L"Button %d", button + 1);
+			return true;
+		}
+		if (button < 4) {
+			switch (SDL_GetGamepadButtonLabel(device->mpGamepad,
+				(SDL_GamepadButton)button)) {
+				case SDL_GAMEPAD_BUTTON_LABEL_A: name = L"A button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_B: name = L"B button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_X: name = L"X button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_Y: name = L"Y button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_CROSS: name = L"Cross button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: name = L"Circle button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: name = L"Square button"; return true;
+				case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: name = L"Triangle button"; return true;
+				default: break;
+			}
+		}
+		static const wchar_t *const names[] = {
+			L"South button", L"East button", L"West button", L"North button",
+			L"Left shoulder", L"Right shoulder", L"Back button", L"Start button",
+			L"Left stick click", L"Right stick click", L"Guide button"
+		};
+		name = names[button];
+		return true;
+	}
+	static const wchar_t *const directions[] = {
+		L"Left stick left", L"Left stick right", L"Left stick up", L"Left stick down",
+		L"Left trigger released", L"Left trigger (L2 / LT)",
+		L"Right stick left", L"Right stick right", L"Right stick up", L"Right stick down",
+		L"Right trigger released", L"Right trigger (R2 / RT)",
+		L"D-pad left", L"D-pad right", L"D-pad up", L"D-pad down"
+	};
+	if (code >= kATInputCode_JoyStick1Left && code <= kATInputCode_JoyPOVDown) {
+		name = directions[code - kATInputCode_JoyStick1Left];
+		return true;
+	}
+	return false;
 }
 
 uint32 ATJoystickManagerSDL3Impl::GetJoystickPortStates() const {

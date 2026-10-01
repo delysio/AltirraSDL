@@ -26,6 +26,7 @@
 #include <at/ataudio/pokey.h>
 
 #include "ui_main.h"
+#include "ui_guided_input.h"
 #include "ui_menus_internal.h"
 #include "ui_debugger.h"
 #include "ui_textselection.h"
@@ -812,6 +813,12 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 // that touch the given physical port, presents them as independent checked
 // items, and persists each selection immediately.
 static void RenderPortSubmenu(ATInputManager &im, int portIdx) {
+	// Fork extension: convenient entry to the same guided map editor.
+	if (portIdx < 2) {
+		if (ImGui::MenuItem("Guided Joystick Setup...", nullptr, false, !im.Is5200Mode()))
+			ATUIOpenGuidedJoystickSetup(portIdx);
+		ImGui::Separator();
+	}
 	// Collect input maps that use this physical port
 	struct MapEntry {
 		ATInputMap *map;

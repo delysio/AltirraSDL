@@ -10,3 +10,5 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev);
 void ATInputSDL3_HandleKeyUp(const SDL_KeyboardEvent& ev);
 void ATInputSDL3_HandleTextInput(const char *text);
 void ATInputSDL3_ReleaseAllKeys();
+// Controller mappings use physical keys, including during binding capture.
+uint32_t ATInputSDL3_GetInputCode(SDL_Scancode scancode);

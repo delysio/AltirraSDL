@@ -59,6 +59,7 @@ target_sources(AltirraSDL PRIVATE
 
     # --- input/ : SDL input, joystick, touch ---
     source/input/input_selection.cpp
+    source/input/input_capture.cpp
     source/input/input_sdl3.cpp
     source/input/joystick_sdl3.cpp
     source/input/keyboard_keymap_sdl3.cpp
@@ -119,6 +120,7 @@ target_sources(AltirraSDL PRIVATE
     # --- ui/input_config/ : Input mapping UI ---
     source/ui/input_config/ui_input.cpp
     source/ui/input_config/ui_input_setup.cpp
+    source/ui/input_config/ui_guided_input.cpp
 
     # --- ui/tools/ : Advanced Config, Disk Explorer, Setup Wizard, etc. ---
     source/ui/tools/ui_tools.cpp

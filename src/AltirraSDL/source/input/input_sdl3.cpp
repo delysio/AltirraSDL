@@ -72,7 +72,7 @@ extern const vdfastvector<uint32>& ATUIGetCustomKeyMapRef();
 // reference VK codes) work identically on SDL3.
 // -------------------------------------------------------------------------
 
-static uint32 SDLScancodeToInputCode(SDL_Scancode sc) {
+uint32_t ATInputSDL3_GetInputCode(SDL_Scancode sc) {
 	switch (sc) {
 	// Letters
 	case SDL_SCANCODE_A: return kATInputCode_KeyA;
@@ -190,6 +190,10 @@ static uint32 SDLScancodeToInputCode(SDL_Scancode sc) {
 
 	default: return kATInputCode_None;
 	}
+}
+
+static uint32 SDLScancodeToInputCode(SDL_Scancode sc) {
+	return ATInputSDL3_GetInputCode(sc);
 }
 
 // -------------------------------------------------------------------------
