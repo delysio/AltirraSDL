@@ -39,14 +39,23 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 		return;
 	}
 
-	if (ATUICheckEscClose()) {
-		state.showProfiles = false;
-		ImGui::End();
-		return;
-	}
-
 	static char renameBuffer[128] = {};
 	static uint32 renamingId = kATProfileId_Invalid;
+	static bool focusRename = false;
+	if (ImGui::IsWindowAppearing()) {
+		renamingId = kATProfileId_Invalid;
+		focusRename = false;
+	}
+	if (ATUICheckEscClose()) {
+		if (renamingId != kATProfileId_Invalid) {
+			renamingId = kATProfileId_Invalid;
+			focusRename = false;
+		} else {
+			state.showProfiles = false;
+			ImGui::End();
+			return;
+		}
+	}
 
 	uint32 currentId = ATSettingsGetCurrentProfileId();
 
@@ -106,7 +115,8 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 	// User profiles section
 	ImGui::SeparatorText("All Profiles");
 
-	float listHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2;
+	float listHeight = ImGui::GetContentRegionAvail().y
+		- ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y;
 
 	if (ImGui::BeginChild("##ProfileList", ImVec2(0, listHeight), ImGuiChildFlags_Borders)) {
 		// Global profile (ID 0) — cannot be renamed or deleted
@@ -143,18 +153,26 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 
 			if (renamingId == id) {
 				ImGui::SetNextItemWidth(-100);
-				if (ImGui::InputText("##rename", renameBuffer, sizeof(renameBuffer),
-					ImGuiInputTextFlags_EnterReturnsTrue)) {
+				if (focusRename)
+					ImGui::SetKeyboardFocusHere();
+				const bool entered = ImGui::InputText("##rename", renameBuffer,
+					sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue
+						| ImGuiInputTextFlags_AutoSelectAll);
+				if (focusRename) {
+					ImGui::SetScrollHereY();
+					focusRename = false;
+				}
+				ImGui::SameLine();
+				const bool done = ImGui::SmallButton("Done");
+				if (entered || done) {
 					ATSettingsProfileSetName(id, VDTextU8ToW(VDStringA(renameBuffer)).c_str());
 					renamingId = kATProfileId_Invalid;
 				}
-				ImGui::SameLine();
-				if (ImGui::SmallButton("Done"))
-					renamingId = kATProfileId_Invalid;
 			} else {
 				if (ImGui::Selectable(nameU8.c_str(), isActive, ImGuiSelectableFlags_AllowDoubleClick)) {
 					if (ImGui::IsMouseDoubleClicked(0)) {
 						renamingId = id;
+						focusRename = true;
 						strncpy(renameBuffer, nameU8.c_str(), sizeof(renameBuffer) - 1);
 					} else if (!isActive) {
 						ATSettingsSwitchProfile(id);
@@ -176,6 +194,7 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 				}
 				if (ImGui::MenuItem("Rename")) {
 					renamingId = id;
+					focusRename = true;
 					strncpy(renameBuffer, nameU8.c_str(), sizeof(renameBuffer) - 1);
 				}
 
@@ -207,11 +226,13 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 		ATSettingsProfileSetVisible(newId, true);
 		// Start renaming immediately
 		renamingId = newId;
+		focusRename = true;
 		strncpy(renameBuffer, "New Profile", sizeof(renameBuffer) - 1);
 	}
 
 	ImGui::SameLine();
-	if (ImGui::Button("OK"))
+	ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - 80.0f);
+	if (ImGui::Button("OK", ImVec2(80.0f, 0)))
 		state.showProfiles = false;
 
 	ImGui::End();

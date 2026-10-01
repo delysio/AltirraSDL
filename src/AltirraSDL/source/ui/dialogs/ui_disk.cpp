@@ -996,7 +996,7 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 		return;
 	}
 #endif
-	ImGui::SetNextWindowSize(ImVec2(720, 460), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ATUIFitDialogSize(ImVec2(720, 460)), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Disk drives", &state.showDiskManager, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
@@ -1026,8 +1026,11 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	// --- Per-drive table ---
 	if (ImGui::BeginTable("##Drives", 7,
 		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-		ImGuiTableFlags_SizingStretchProp)) {
+		ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY,
+		ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2.0f
+			- ImGui::GetStyle().ItemSpacing.y * 3.0f))) {
 
+		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableSetupColumn("Drive", ImGuiTableColumnFlags_WidthFixed, 48);
 		ImGui::TableSetupColumn("Image", ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableSetupColumn("Write Mode", ImGuiTableColumnFlags_WidthFixed, 100);
@@ -1048,6 +1051,7 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 			// Drive label
 			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
 			if (dirty)
 				ImGui::TextColored(ATUIColorWarningText(), "D%d:", driveIdx + 1);
 			else
@@ -1055,6 +1059,7 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 			// Image name
 			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
 			if (loaded) {
 				const wchar_t *path = di.GetPath();
 				if (path && *path) {
@@ -1063,6 +1068,7 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 					const char *p = strrchr(base, '/');
 					if (p) base = p + 1;
 					ImGui::TextUnformatted(base);
+					ImGui::SetItemTooltip("%s", u8.c_str());
 				} else {
 					ImGui::TextDisabled("(loaded)");
 				}
@@ -1096,13 +1102,14 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			// the file picker so unsaved changes aren't silently
 			// replaced by the new image.
 			ImGui::TableNextColumn();
-			if (ImGui::SmallButton("...")) {
+			if (ImGui::Button("...", ImVec2(-FLT_MIN, 0))) {
 				ConfirmDiscardIfDirty(driveIdx, [driveIdx, window]() {
 					ATUIShowOpenFileDialog('disk', DiskMountCallback,
 						(void *)(intptr_t)driveIdx, window,
 						kDiskFilters, 2, false);
 				});
 			}
+			ImGui::SetItemTooltip("Browse for a disk image for D%d:", driveIdx + 1);
 
 			// "Side..." variant picker (mirrors Gaming Mode's Side
 			// button — mobile_disk.cpp:147-174).  Shown only when the
@@ -1118,7 +1125,7 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				&& GetGameLibrary()->GetEntries()[libEntry]
 					.mVariants.size() > 1;
 			if (hasAlts) {
-				if (ImGui::SmallButton("Side...")) {
+				if (ImGui::Button("Side...", ImVec2(-FLT_MIN, 0))) {
 					ConfirmDiscardIfDirty(driveIdx,
 						[driveIdx, libEntry]() {
 							g_diskVariantPopupDrive = driveIdx;
@@ -1130,14 +1137,17 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 			// Eject button (matches Windows IDC_EJECT).  Prompts if dirty.
 			ImGui::TableNextColumn();
-			if (ImGui::SmallButton("Eject") && loaded)
+			ImGui::BeginDisabled(!loaded);
+			if (ImGui::Button("Eject", ImVec2(-FLT_MIN, 0)))
 				ConfirmAndEject(driveIdx);
+			ImGui::EndDisabled();
 
 			// More button (context menu — matches Windows IDC_MORE / "+")
 			ImGui::TableNextColumn();
-			if (ImGui::SmallButton("+")) {
+			if (ImGui::Button("+", ImVec2(-FLT_MIN, 0))) {
 				ImGui::OpenPopup("##DriveCtx");
 			}
+			ImGui::SetItemTooltip("More actions for D%d:", driveIdx + 1);
 
 			RenderDiskDriveContextMenu(driveIdx, di, sim, state, window);
 

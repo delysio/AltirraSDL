@@ -282,7 +282,7 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 		}
 	}
 
-	ImGui::SetNextWindowSize(ImVec2(680, 480), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ATUIFitDialogSize(ImVec2(680, 480)), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
 		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
@@ -299,15 +299,15 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 	}
 
 	// --- Search controls ---
-	ImGui::SetNextItemWidth(280);
+	const float fieldX = ImGui::GetCursorPosX()
+		+ ImGui::CalcTextSize("Search value").x + ImGui::GetStyle().ItemSpacing.x;
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Search mode");
+	ImGui::SameLine(fieldX);
+	ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Update").x
+		- ImGui::GetStyle().FramePadding.x * 2.0f
+		- ImGui::GetStyle().ItemSpacing.x);
 	ImGui::Combo("##mode", &s_searchMode, kSearchModeLabels, IM_ARRAYSIZE(kSearchModeLabels));
-
-	ImGui::SameLine();
-	bool needsValue = (s_searchMode == kATCheatSnapMode_EqualRef);
-	if (!needsValue) ImGui::BeginDisabled();
-	ImGui::SetNextItemWidth(80);
-	ImGui::InputText("##searchval", s_searchValue, sizeof(s_searchValue));
-	if (!needsValue) ImGui::EndDisabled();
 
 	ImGui::SameLine();
 	if (ImGui::Button("Update")) {
@@ -364,7 +364,17 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 			UpdateSearchResults(ce);
 	}
 
-	ImGui::SameLine();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Search value");
+	ImGui::SameLine(fieldX);
+	bool needsValue = (s_searchMode == kATCheatSnapMode_EqualRef);
+	ImGui::BeginDisabled(!needsValue);
+	ImGui::SetNextItemWidth(-FLT_MIN);
+	ImGui::InputText("##searchval", s_searchValue, sizeof(s_searchValue));
+	ImGui::EndDisabled();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Value type");
+	ImGui::SameLine(fieldX);
 	ImGui::RadioButton("8-bit", &s_search16Bit, 0); ImGui::SameLine();
 	ImGui::RadioButton("16-bit", &s_search16Bit, 1);
 
@@ -374,16 +384,17 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 		ImGui::Text("Results: %u matches", s_totalMatches);
 
 	if (s_errorMessage[0]) {
-		ImGui::PushStyleColor(ImGuiCol_Text, ATUIColorWarningText());
-		ImGui::TextUnformatted(s_errorMessage);
+		ImGui::PushStyleColor(ImGuiCol_Text, ATUIColorDangerText());
+		ImGui::TextWrapped("%s", s_errorMessage);
 		ImGui::PopStyleColor();
 	}
 
 	// --- Two-column layout: results | transfer buttons | active cheats ---
 	float availW = ImGui::GetContentRegionAvail().x;
 	float btnColW = 50;
-	float listW = (availW - btnColW) * 0.5f;
-	float listH = ImGui::GetContentRegionAvail().y - 40; // reserve space for bottom buttons
+	float listW = (availW - btnColW - ImGui::GetStyle().ItemSpacing.x * 2.0f) * 0.5f;
+	float listH = ImGui::GetContentRegionAvail().y
+		- ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y;
 
 	// Left column: Search Results
 	ImGui::BeginChild("##results", ImVec2(listW, listH), ImGuiChildFlags_Borders);
@@ -391,7 +402,7 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 	ImGui::Separator();
 
 	if (!s_totalMatches) {
-		ImGui::TextUnformatted("No results left. Try again.");
+		ImGui::TextWrapped("No matches. Choose a search mode and click Update.");
 	} else if (s_totalMatches >= kMaxSearchResults) {
 		ImGui::Text("Too many results (%u).", s_totalMatches);
 	} else {
@@ -446,6 +457,8 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 	ImGui::Separator();
 
 	uint32 cheatCount = ce->GetCheatCount();
+	if (!cheatCount)
+		ImGui::TextDisabled("No active cheats.");
 	if (s_selectedCheat >= (int)cheatCount)
 		s_selectedCheat = -1;
 
@@ -535,6 +548,10 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 		ATUIShowSaveFileDialog('CHET', SaveCheatsCallback, nullptr,
 			SDL_GetKeyboardFocus(), kCheatFilters, 2);
 	}
+	ImGui::SameLine();
+	ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - 80.0f);
+	if (ImGui::Button("OK", ImVec2(80.0f, 0)))
+		state.showCheater = false;
 
 	// Edit cheat popup (modal)
 	RenderEditCheatPopup(ce);

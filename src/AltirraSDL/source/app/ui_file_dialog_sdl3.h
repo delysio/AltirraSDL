@@ -12,10 +12,12 @@
 //   2. when the user picks a file, stores the full selected path back
 //      under the same key before invoking the user's callback.
 //
-// Callbacks may be invoked from SDL's dialog thread — this wrapper only
-// touches the thread-safe VD registry/filespec API, so it is safe to
-// call the underlying VDSetLastLoadSavePath from the callback trampoline
-// before forwarding to user code.
+// Opening a picker suspends emulation until its selected-file action has
+// been processed. Existing manual pauses are preserved on completion.
+// Callbacks may run on SDL's dialog thread: they only update thread-safe
+// registry data and release an atomic pause lease. Simulator changes and
+// native-error fallback installation happen on the main thread. Callers
+// must continue to defer simulator work to the main thread.
 
 #ifndef AT_UI_FILE_DIALOG_SDL3_H
 #define AT_UI_FILE_DIALOG_SDL3_H
@@ -55,6 +57,11 @@ void ATUIShowOpenFolderDialog(
 	bool notifyCancellation = false);
 
 void ATUIRenderFileDialogFallback();
+
+// Main-thread pause lease, shared by native, built-in and browser pickers.
+// Returns true while selected-file actions must run without emulation.
+bool ATUIPollFileDialogPause(bool fileBrowserOpen = false);
+bool ATUIIsFileDialogPaused();
 
 bool ATUIGetForceBuiltinFileDialog();
 void ATUISetForceBuiltinFileDialog(bool enabled);

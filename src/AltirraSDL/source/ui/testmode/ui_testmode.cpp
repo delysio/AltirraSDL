@@ -29,6 +29,7 @@
 #include "ui/tools/setup_wizard_shared.h"
 #include "media/metadata_settings.h"
 #include "simulator.h"
+#include <at/atcore/scheduler.h>
 #include "gtia.h"
 #include "oshelper.h"
 #include "inputmanager.h"
@@ -417,6 +418,11 @@ static std::string BuildStateJson(ATSimulator &sim, ATUIState &state) {
 	json += sim.IsPaused() ? "true" : "false";
 	json += ",\"turbo\":";
 	json += sim.IsTurboModeEnabled() ? "true" : "false";
+
+	json += ",\"fileDialogPaused\":";
+	json += ATUIIsFileDialogPaused() ? "true" : "false";
+	json += ",\"emulationTick\":";
+	json += std::to_string(sim.GetScheduler()->GetTick64());
 
 	// Hardware type
 	auto hwMode = sim.GetHardwareMode();

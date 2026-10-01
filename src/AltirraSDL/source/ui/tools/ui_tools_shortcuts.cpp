@@ -66,7 +66,7 @@ static char s_conflictCmd[256] = {};
 void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 	static const char *kContextNames[] = { "Global", "Display", "Debugger" };
 
-	ImGui::SetNextWindowSize(ImVec2(620, 480), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ATUIFitDialogSize(ImVec2(620, 480)), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Keyboard Shortcuts", &state.showKeyboardShortcuts, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
@@ -99,8 +99,13 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 
 	// Filter
 	static char filterBuf[128] = {};
-	ImGui::SetNextItemWidth(200);
-	ImGui::InputTextWithHint("##filter", "Filter...", filterBuf, sizeof(filterBuf));
+	ImGui::SetNextItemWidth(-ImGui::CalcTextSize("(?)").x
+		- ImGui::GetStyle().ItemSpacing.x);
+	if (ImGui::InputTextWithHint("##filter", "Search commands or shortcuts",
+		filterBuf, sizeof(filterBuf))) {
+		s_selectedContext = -1;
+		s_selectedIndex = -1;
+	}
 	ImGui::SameLine();
 	ImGui::TextDisabled("(?)");
 	if (ImGui::IsItemHovered())
@@ -109,7 +114,8 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 
 	ImGui::Separator();
 
-	float buttonAreaHeight = 35;
+	float buttonAreaHeight = ImGui::GetFrameHeightWithSpacing()
+		+ ImGui::GetStyle().ItemSpacing.y;
 	if (ImGui::BeginTable("Shortcuts", 3,
 		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
 		ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
@@ -185,6 +191,11 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 				rowId++;
 			}
 		}
+		if (!rowId) {
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::TextDisabled("No shortcuts match your search.");
+		}
 
 		ImGui::EndTable();
 	}
@@ -192,6 +203,11 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 	// Buttons
 	ImGui::Spacing();
 
+	const bool hasSelection = s_selectedContext >= 0
+		&& s_selectedContext < kATUIAccelContextCount
+		&& s_selectedIndex >= 0
+		&& s_selectedIndex < (int)ATUIGetAccelTables()[s_selectedContext].GetSize();
+	ImGui::BeginDisabled(!hasSelection);
 	if (ImGui::Button("Rebind", ImVec2(80, 0))) {
 		if (s_selectedContext >= 0 && s_selectedIndex >= 0)
 			s_captureRequested = true;
@@ -210,6 +226,7 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 			}
 		}
 	}
+	ImGui::EndDisabled();
 	ImGui::SameLine();
 
 	if (ImGui::Button("Reset to Defaults", ImVec2(130, 0))) {
@@ -377,4 +394,3 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 
 	ImGui::End();
 }
-

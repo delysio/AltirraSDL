@@ -1,11 +1,15 @@
+#include <stdafx.h>
 #include "ui_file_dialog_sdl3.h"
+#include "ui_main.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <vector>
 #include <imgui.h>
@@ -14,6 +18,9 @@
 #include <vd2/system/VDString.h>
 #include <vd2/Dita/services.h>
 #include <at/atcore/configvar.h>
+#include "simulator.h"
+
+extern ATSimulator g_sim;
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
@@ -77,7 +84,15 @@ namespace {
 		return result;
 	}
 
+	// Only the main thread touches simulator state. Dialog threads release
+	// their lease after publishing the selected-file action.
+	std::atomic<unsigned> g_dialogCount {0};
+	bool g_dialogSuspended = false;
+	bool g_dialogWasRunning = false;
+	bool g_dialogCompletionSeen = false;
+
 	struct DialogContext {
+		~DialogContext() { --g_dialogCount; }
 		long					nKey;
 		SDL_DialogFileCallback	userCb;
 		void *					userUd;
@@ -93,7 +108,10 @@ namespace {
 
 		std::string				currentDir;
 		std::string				editDir;
-		std::string				saveName;
+		std::string				fileName;
+		std::string				fileError;
+		std::string				directoryError;
+		std::string				replacePath;
 		std::string				search;
 		bool					showHidden = false;
 		int						sortColumn = 0;	// 0=Name, 1=Modified, 2=Size
@@ -105,6 +123,7 @@ namespace {
 	void SDLCALL DialogTrampoline(void *ud, const char * const *filelist, int filter);
 
 	std::mutex g_fallbackMutex;
+	std::vector<DialogContext *> g_pendingFallbacks;
 	DialogContext *g_fallbackCtx = nullptr;
 	bool g_fallbackOpenNextFrame = false;
 
@@ -210,6 +229,12 @@ namespace {
 	void SetFallbackDirectory(DialogContext& ctx, const std::string& path) {
 		ctx.currentDir = path.empty() ? "/" : path;
 		ctx.editDir = ctx.currentDir;
+		// Browsing to the destination must not discard a typed save name.
+		if (ctx.mode != DialogMode::SaveFile)
+			ctx.fileName.clear();
+		ctx.fileError.clear();
+		ctx.directoryError.clear();
+		ctx.replacePath.clear();
 		ctx.needsRefresh = true;
 		for (FallbackEntry& entry : ctx.entries)
 			entry.selected = false;
@@ -225,15 +250,19 @@ namespace {
 				SetFallbackDirectory(*ctx, "/");
 		}
 
-		std::lock_guard<std::mutex> lock(g_fallbackMutex);
-		if (g_fallbackCtx) {
-			DialogContext *old = g_fallbackCtx;
-			g_fallbackCtx = nullptr;
+		DialogContext *old;
+		{
+			std::lock_guard<std::mutex> lock(g_fallbackMutex);
+			old = g_fallbackCtx;
+			g_fallbackCtx = ctx;
+			g_fallbackOpenNextFrame = true;
+		}
+		// Cancellation callbacks can open another picker. Never invoke one
+		// while holding the fallback mutex; both contexts retain pause leases.
+		if (old) {
 			const char *noList[1] = { nullptr };
 			DialogTrampoline(old, noList, 0);
 		}
-		g_fallbackCtx = ctx;
-		g_fallbackOpenNextFrame = true;
 	}
 
 	void SDLCALL DialogTrampoline(void *ud, const char * const *filelist, int filter) {
@@ -244,9 +273,14 @@ namespace {
 			fprintf(stderr,
 				"[AltirraSDL] Native SDL file dialog failed: %s; using ImGui fallback.\n",
 				err && *err ? err : "unknown error");
-			QueueFallback(ctx);
+			// The SDL callback may be on a worker thread. Install the UI
+			// fallback on the main thread, retaining this pause lease.
+			std::lock_guard<std::mutex> lock(g_fallbackMutex);
+			g_pendingFallbacks.push_back(ctx);
 			return;
 		}
+
+		std::unique_ptr<DialogContext> completed(ctx);
 
 		// filelist == nullptr means an SDL error.  An empty list or empty
 		// filename means cancel. Only lifecycle-aware callers opt into notification.
@@ -255,7 +289,6 @@ namespace {
 				const char *empty[] = {nullptr};
 				ctx->userCb(ctx->userUd, empty, filter);
 			}
-			delete ctx;
 			return;
 		}
 
@@ -268,11 +301,17 @@ namespace {
 		if (ctx->userCb)
 			ctx->userCb(ctx->userUd, filelist, filter);
 
-		delete ctx;
 	}
 
 	DialogContext *MakeContext(long nKey, SDL_DialogFileCallback cb, void *ud, const char *fallback) {
 		DialogContext *ctx = new DialogContext;
+		++g_dialogCount;
+		if (!g_dialogSuspended) {
+			g_dialogWasRunning = g_sim.IsRunning();
+			g_dialogSuspended = true;
+		}
+		g_dialogCompletionSeen = false;
+		g_sim.Suspend();
 		ctx->nKey   = nKey;
 		ctx->userCb = cb;
 		ctx->userUd = ud;
@@ -317,6 +356,11 @@ static void ExpandFilters(DialogContext *ctx, const SDL_DialogFileFilter *filter
 }
 
 static void RefreshFallbackEntries(DialogContext& ctx) {
+	std::vector<std::string> selectedPaths;
+	for (const FallbackEntry& entry : ctx.entries) {
+		if (entry.selected)
+			selectedPaths.push_back(entry.path);
+	}
 	ctx.entries.clear();
 
 	auto cb = [](void *ud, const char *dirname, const char *fname)
@@ -347,7 +391,15 @@ static void RefreshFallbackEntries(DialogContext& ctx) {
 		return SDL_ENUM_CONTINUE;
 	};
 
-	SDL_EnumerateDirectory(ctx.currentDir.c_str(), cb, &ctx);
+	ctx.directoryError.clear();
+	if (!SDL_EnumerateDirectory(ctx.currentDir.c_str(), cb, &ctx)) {
+		ctx.directoryError = "Unable to read this folder: ";
+		ctx.directoryError += SDL_GetError();
+	}
+	for (FallbackEntry& entry : ctx.entries) {
+		entry.selected = std::find(selectedPaths.begin(), selectedPaths.end(),
+			entry.path) != selectedPaths.end();
+	}
 	std::sort(ctx.entries.begin(), ctx.entries.end(),
 		[&](const FallbackEntry& a, const FallbackEntry& b) {
 			const bool ad = a.info.type == SDL_PATHTYPE_DIRECTORY;
@@ -446,6 +498,14 @@ static void RenderShortcutButton(const char *label, const char *path,
 }
 
 void ATUIRenderFileDialogFallback() {
+	std::vector<DialogContext *> pending;
+	{
+		std::lock_guard<std::mutex> lock(g_fallbackMutex);
+		pending.swap(g_pendingFallbacks);
+	}
+	for (DialogContext *failed : pending)
+		QueueFallback(failed);
+
 	DialogContext *ctx = nullptr;
 	bool openNext = false;
 	{
@@ -486,10 +546,20 @@ void ATUIRenderFileDialogFallback() {
 		CancelFallback(ctx);
 		return;
 	}
+	if (ATUICheckEscClose()) {
+		if (!ctx->replacePath.empty()) {
+			ctx->replacePath.clear();
+		} else {
+			ImGui::EndPopup();
+			CancelFallback(ctx);
+			return;
+		}
+	}
 
 	if (ctx->needsRefresh)
 		RefreshFallbackEntries(*ctx);
 
+	ImGui::TextUnformatted("Folder");
 	if (ImGui::Button("Up")) {
 		SetFallbackDirectory(*ctx, ParentPath(ctx->currentDir));
 	}
@@ -511,9 +581,17 @@ void ATUIRenderFileDialogFallback() {
 			&& info.type == SDL_PATHTYPE_DIRECTORY)
 		{
 			SetFallbackDirectory(*ctx, pathBuf);
+		} else {
+			ctx->directoryError = "Folder not found. Check the path and try again.";
 		}
 	} else if (ImGui::IsItemEdited()) {
 		ctx->editDir = pathBuf;
+		ctx->directoryError.clear();
+	}
+	if (!ctx->directoryError.empty()) {
+		ImGui::PushStyleColor(ImGuiCol_Text, ATUIColorDangerText());
+		ImGui::TextWrapped("%s", ctx->directoryError.c_str());
+		ImGui::PopStyleColor();
 	}
 
 	const char *home = SDL_GetUserFolder(SDL_FOLDER_HOME);
@@ -529,11 +607,16 @@ void ATUIRenderFileDialogFallback() {
 	if (ImGui::Checkbox("Hidden", &ctx->showHidden))
 		ctx->needsRefresh = true;
 
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(220.0f);
+	// Search and file type get their own row, sized to the available
+	// width so both remain accessible in a smaller window.
+	const float searchWidth = ctx->expandedFilters.empty()
+		? ImGui::GetContentRegionAvail().x
+		: (ImGui::GetContentRegionAvail().x
+			- ImGui::GetStyle().ItemSpacing.x) * 0.55f;
+	ImGui::SetNextItemWidth(searchWidth);
 	char searchBuf[256];
 	snprintf(searchBuf, sizeof searchBuf, "%s", ctx->search.c_str());
-	if (ImGui::InputTextWithHint("##search", "Search", searchBuf,
+	if (ImGui::InputTextWithHint("##search", "Search this folder", searchBuf,
 		sizeof searchBuf))
 	{
 		ctx->search = searchBuf;
@@ -542,7 +625,7 @@ void ATUIRenderFileDialogFallback() {
 
 	if (!ctx->expandedFilters.empty()) {
 		ImGui::SameLine();
-		ImGui::SetNextItemWidth(220.0f);
+		ImGui::SetNextItemWidth(-1);
 		const char *preview =
 			ctx->expandedFilters[ctx->selectedFilter].name;
 		if (ImGui::BeginCombo("##filter", preview ? preview : "Filter")) {
@@ -569,8 +652,13 @@ void ATUIRenderFileDialogFallback() {
 		}
 	}
 
-	const float footerH = ctx->mode == DialogMode::SaveFile
-		? 88.0f : 48.0f;
+	const float footerH = ImGui::GetFrameHeightWithSpacing()
+		+ ImGui::GetStyle().ItemSpacing.y
+		+ (ctx->mode == DialogMode::OpenFolder ? 0.0f
+			: ImGui::GetTextLineHeightWithSpacing()
+				+ ImGui::GetFrameHeightWithSpacing())
+		+ (ctx->replacePath.empty() && ctx->fileError.empty() ? 0.0f
+			: ImGui::GetTextLineHeightWithSpacing());
 	if (ImGui::BeginTable("##filetable", 3,
 		ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
 			| ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY
@@ -587,6 +675,13 @@ void ATUIRenderFileDialogFallback() {
 			ImGuiTableColumnFlags_PreferSortDescending
 				| ImGuiTableColumnFlags_WidthFixed, 90.0f);
 		ImGui::TableHeadersRow();
+		if (ctx->entries.empty() && ctx->directoryError.empty()) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextDisabled(ctx->search.empty()
+				? "No files to show in this folder."
+				: "No names match your search.");
+		}
 
 		if (ImGuiTableSortSpecs *sorts = ImGui::TableGetSortSpecs()) {
 			if (sorts->SpecsDirty && sorts->SpecsCount > 0) {
@@ -621,13 +716,20 @@ void ATUIRenderFileDialogFallback() {
 						}
 						e.selected = !selected;
 					} else if (!isDir && ctx->mode == DialogMode::SaveFile) {
-						ctx->saveName = e.name;
+						ctx->fileName = e.name;
+						ctx->fileError.clear();
+						ctx->replacePath.clear();
 					} else if (!isDir || ctx->mode == DialogMode::OpenFolder) {
 					if (!ctx->allowMany) {
 						for (FallbackEntry& other : ctx->entries)
 							other.selected = false;
 					}
-					e.selected = !selected;
+						e.selected = !selected;
+						if (ctx->mode == DialogMode::OpenFile) {
+							ctx->fileName = ctx->allowMany || !e.selected
+								? std::string() : e.name;
+							ctx->fileError.clear();
+						}
 				}
 			}
 			if (!isDir && ctx->mode == DialogMode::OpenFile
@@ -653,28 +755,105 @@ void ATUIRenderFileDialogFallback() {
 		ImGui::EndTable();
 	}
 
-	if (ctx->mode == DialogMode::SaveFile) {
+	bool nameSubmitted = false;
+	if (ctx->mode != DialogMode::OpenFolder) {
+		ImGui::TextUnformatted("File name");
 		char nameBuf[1024];
-		snprintf(nameBuf, sizeof nameBuf, "%s", ctx->saveName.c_str());
+		snprintf(nameBuf, sizeof nameBuf, "%s", ctx->fileName.c_str());
 		ImGui::SetNextItemWidth(-1);
-		if (ImGui::InputText("File name", nameBuf, sizeof nameBuf))
-			ctx->saveName = nameBuf;
+		if (openNext && ctx->mode == DialogMode::SaveFile)
+			ImGui::SetKeyboardFocusHere();
+		nameSubmitted = ImGui::InputTextWithHint("##filename",
+			ctx->mode == DialogMode::SaveFile ? "Enter a file name"
+				: "Select a file or enter its name",
+			nameBuf, sizeof nameBuf, ImGuiInputTextFlags_EnterReturnsTrue);
+		if (ImGui::IsItemEdited()) {
+			ctx->fileName = nameBuf;
+			ctx->fileError.clear();
+			ctx->replacePath.clear();
+			if (ctx->mode == DialogMode::OpenFile) {
+				for (FallbackEntry& entry : ctx->entries)
+					entry.selected = false;
+			}
+		}
+		if (!ctx->fileError.empty())
+			ImGui::TextColored(ATUIColorDangerText(),
+				"%s", ctx->fileError.c_str());
+	}
+
+	const float buttonWidth = 120.0f;
+	const float buttonRowWidth = buttonWidth * 2.0f
+		+ ImGui::GetStyle().ItemSpacing.x;
+	if (!ctx->replacePath.empty()) {
+		ImGui::TextWrapped("This file already exists. Replace it?");
+		ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x
+			- buttonRowWidth);
+		if (ImGui::Button("Replace", ImVec2(buttonWidth, 0))) {
+			CompleteFallback(ctx, { ctx->replacePath });
+			ImGui::EndPopup();
+			return;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Keep editing", ImVec2(buttonWidth, 0)))
+			ctx->replacePath.clear();
+		ImGui::EndPopup();
+		return;
 	}
 
 	const char *primary = ctx->mode == DialogMode::SaveFile ? "Save"
 		: ctx->mode == DialogMode::OpenFolder ? "Select Folder"
 		: "Open";
-	if (ImGui::Button(primary, ImVec2(120.0f, 0))) {
+	const bool hasSelection = std::any_of(ctx->entries.begin(),
+		ctx->entries.end(), [](const FallbackEntry& entry) {
+			return entry.selected;
+		});
+	const bool canSubmit = ctx->mode == DialogMode::OpenFolder
+		|| !ctx->fileName.empty()
+		|| (ctx->mode == DialogMode::OpenFile && hasSelection);
+	ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x
+		- buttonRowWidth);
+	ImGui::BeginDisabled(!canSubmit);
+	const bool primaryClicked = ImGui::Button(primary, ImVec2(buttonWidth, 0));
+	ImGui::EndDisabled();
+	if (nameSubmitted || primaryClicked) {
 		std::vector<std::string> paths;
 		if (ctx->mode == DialogMode::SaveFile) {
-			std::string name = ctx->saveName;
+			std::string name = ctx->fileName;
 			if (!name.empty()) {
-				if (!MatchesFilter(*ctx, name)) {
-					std::string ext = FirstFilterExtension(*ctx);
-					if (!ext.empty())
-						name += "." + ext;
+				if (name.find_first_of("/\\") != std::string::npos
+					|| name == "." || name == "..") {
+					ctx->fileError = "Enter a file name without a path.";
+				} else {
+					if (name.find_last_of('.') == std::string::npos) {
+						std::string ext = FirstFilterExtension(*ctx);
+						if (!ext.empty())
+							name += "." + ext;
+					}
+					const std::string path = JoinPath(ctx->currentDir, name);
+					SDL_PathInfo info;
+					if (SDL_GetPathInfo(path.c_str(), &info)) {
+						if (info.type == SDL_PATHTYPE_FILE) {
+							ctx->replacePath = path;
+						} else {
+							ctx->fileError = "Choose a file name, not a folder.";
+						}
+					} else {
+						paths.push_back(path);
+					}
 				}
-				paths.push_back(JoinPath(ctx->currentDir, name));
+			}
+		} else if (ctx->mode == DialogMode::OpenFile && !ctx->fileName.empty()) {
+			const std::string path = JoinPath(ctx->currentDir, ctx->fileName);
+			SDL_PathInfo info;
+			if (SDL_GetPathInfo(path.c_str(), &info)) {
+				if (info.type == SDL_PATHTYPE_DIRECTORY)
+					SetFallbackDirectory(*ctx, path);
+				else if (info.type == SDL_PATHTYPE_FILE)
+					paths.push_back(path);
+				else
+					ctx->fileError = "Choose a regular file.";
+			} else {
+				ctx->fileError = "File not found in this folder.";
 			}
 		} else {
 			for (const FallbackEntry& e : ctx->entries) {
@@ -689,12 +868,11 @@ void ATUIRenderFileDialogFallback() {
 		}
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Cancel", ImVec2(120.0f, 0))) {
+	if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) {
 		CancelFallback(ctx);
 		ImGui::EndPopup();
 		return;
 	}
-
 	ImGui::EndPopup();
 }
 
@@ -996,3 +1174,42 @@ void ATUIShowOpenFolderDialog(
 }
 
 #endif // __EMSCRIPTEN__
+
+bool ATUIIsFileDialogPaused() {
+	return g_dialogSuspended;
+}
+
+// Called after deferred actions and debugger commands, before advancing.
+// Keep one render pass after completion: several tools consume their file
+// results during rendering rather than through the deferred-action queue.
+bool ATUIPollFileDialogPause(bool fileBrowserOpen) {
+	if (fileBrowserOpen && !g_dialogSuspended) {
+		g_dialogWasRunning = g_sim.IsRunning();
+		g_dialogSuspended = true;
+	}
+	if (!g_dialogSuspended)
+		return false;
+
+	// A load/boot action or an explicit Run command can request resume.
+	// Honour it after releasing the picker, without advancing during it.
+	if (g_sim.IsRunning())
+		g_dialogWasRunning = true;
+
+	if (g_dialogCount.load() || fileBrowserOpen) {
+		g_dialogCompletionSeen = false;
+		g_sim.Suspend();
+		return true;
+	}
+
+	if (!g_dialogCompletionSeen) {
+		g_dialogCompletionSeen = true;
+		g_sim.Suspend();
+		return true;
+	}
+
+	g_dialogSuspended = false;
+	// An explicit user pause made while the picker was open takes priority.
+	if (g_dialogWasRunning && !g_sim.IsPaused())
+		g_sim.Resume();
+	return false;
+}

@@ -52,6 +52,29 @@ class TestCassetteControl:
             assert btn in labels, f"Transport button '{btn}' not found"
 
 
+# ── Light Pen/Gun ───────────────────────────────────────────────────────
+
+def test_light_pen_cancel_keeps_last_committed_offsets(emu, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    with AltirraTestHarness(executable=emu.executable) as fresh:
+        fresh.close_dialog("SetupWizard")
+        for value, action in ((37, "OK"), (12, "Cancel")):
+            fresh.open_dialog("LightPen")
+            fresh.wait_frames(4)
+            fresh.click("Light Pen/Gun", "##Horizontal")
+            fresh.wait_frames(3)
+            fresh.send("key ctrl+a")
+            fresh.wait_frames(3)
+            fresh.send(f"send_text {value}")
+            fresh.wait_frames(3)
+            fresh.click("Light Pen/Gun", action)
+            fresh.wait_frames(3)
+        fresh.send("quit")
+        fresh._proc.wait(timeout=5)
+    settings = (tmp_path / "altirra" / "settings.ini").read_text()
+    assert '"Light Gun: Adjust X 2" = 37' in settings
+
+
 # ── Adjust Colors ───────────────────────────────────────────────────────
 
 class TestAdjustColors:

@@ -306,15 +306,22 @@ static void DrawPalettePreview(ATGTIAEmulator& gtia) {
 	uint32 pal[256];
 	gtia.GetPalette(pal);
 
-	// Compute cell size based on available width
+	// Fit the preview to both dimensions. Leave room for the thirteen
+	// primary control rows and two separators below it, so a smaller
+	// canvas does not turn the palette into an entire page of scrolling.
 	float availW = ImGui::GetContentRegionAvail().x;
-	// Keep the preview compact enough that all primary Windows color controls
-	// remain visible in a 720px-tall desktop viewport. ImGui 1.92's slightly
-	// taller widgets otherwise push Intensity Scale just below the initial
-	// scroll area.
-	float cellSize = floorf(std::min(availW / 16.0f, 15.0f));
-	if (cellSize < 4.0f)
-		cellSize = 4.0f;
+	const float controlsHeight = ImGui::GetFrameHeightWithSpacing() * 13.0f
+		+ (ImGui::GetStyle().ItemSpacing.y * 2.0f + 1.0f) * 2.0f;
+	// Use the child window's height, rather than its scroll position, to
+	// keep the palette dimensions stable while navigating the controls.
+	const float previewHeight = ImGui::GetWindowHeight()
+		- ImGui::GetStyle().WindowPadding.y * 2.0f
+		- ImGui::GetFrameHeightWithSpacing() - controlsHeight;
+	float cellSize = floorf(std::min(std::min(availW / 16.0f, 15.0f),
+		previewHeight / 19.0f));
+	// Keep individual swatches readable even when the controls must scroll.
+	if (cellSize < 8.0f)
+		cellSize = 8.0f;
 
 	float gridW = cellSize * 16.0f;
 	float gridH = cellSize * 16.0f;
@@ -392,7 +399,7 @@ static void DrawPalettePreview(ATGTIAEmulator& gtia) {
 }
 
 void ATUIRenderAdjustColors(ATSimulator &sim, ATUIState &state) {
-	ImGui::SetNextWindowSize(ImVec2(500, 720), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ATUIFitDialogSize(ImVec2(500, 720)), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
@@ -497,7 +504,7 @@ void ATUIRenderAdjustColors(ATSimulator &sim, ATUIState &state) {
 	// regardless of how tall the color controls get, matching Windows where
 	// Reset is always on screen.
 	const float footerHeight = ImGui::GetFrameHeightWithSpacing()
-		+ ImGui::GetStyle().ItemSpacing.y;
+		+ ImGui::GetStyle().ItemSpacing.y * 3.0f + 1.0f;
 	ImGui::BeginChild("##AdjustColorsBody", ImVec2(0, -footerHeight), false);
 
 	// ---- Palette preview ----

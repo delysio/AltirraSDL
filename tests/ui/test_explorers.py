@@ -41,7 +41,7 @@ def enter(emu, window, label, text, submit=False):
 
 def save_file(emu, path):
     enter(emu, "Save File", "##path", path.parent, True)
-    enter(emu, "Save File", "File name", path.name)
+    enter(emu, "Save File", "##filename", path.name)
     click(emu, "Save File", "Save")
     emu.wait_frames(5)
 
@@ -97,6 +97,34 @@ def test_file_first_cancel_has_no_empty_document(explorer):
         click(emu, "Open File", "Cancel")
         assert not emu.get_dialog_state(name)
         assert not windows(emu, fragment)
+
+
+def test_picker_accepts_typed_file_name(explorer, tmp_path):
+    emu = explorer
+    source = tmp_path / "typed.xex"
+    source.write_bytes(xex_bytes())
+    emu.open_dialog("XEXExplorer")
+    emu.wait_frames(5)
+    enter(emu, "Open File", "##path", tmp_path, True)
+    enter(emu, "Open File", "##filename", source.name, True)
+    assert len(windows(emu, "XEX Explorer")) == 1
+
+
+def test_picker_confirms_before_replacing_file(explorer, tmp_path):
+    emu = explorer
+    existing = tmp_path / "existing.atstate2"
+    existing.write_bytes(b"keep this file")
+    click(emu, "", "File")
+    click(emu, "", "Save State...")
+    # A save name survives browsing to its destination folder.
+    enter(emu, "Save File", "##filename", "existing")
+    enter(emu, "Save File", "##path", tmp_path, True)
+    click(emu, "Save File", "Save")
+    emu.assert_item_exists("Save File", "Replace")
+    assert existing.read_bytes() == b"keep this file"
+    click(emu, "Save File", "Keep editing")
+    assert emu.find_item("Save File", "Replace") is None
+    click(emu, "Save File", "Cancel")
 
 
 def test_xex_independent_documents_and_exact_exports(explorer, tmp_path):

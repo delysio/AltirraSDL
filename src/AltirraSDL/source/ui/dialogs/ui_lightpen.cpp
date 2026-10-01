@@ -20,7 +20,7 @@ void ATUIRenderLightPenDialog(ATSimulator &sim, ATUIState &state) {
 		return;
 	}
 
-	ImGui::SetNextWindowSize(ImVec2(340, 260), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ATUIFitDialogSize(ImVec2(480, 250)), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
 		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
@@ -37,53 +37,74 @@ void ATUIRenderLightPenDialog(ATSimulator &sim, ATUIState &state) {
 		return;
 	}
 
-	// Gun offsets
-	ImGui::SeparatorText("Gun offset");
-	{
-		vdint2 gunAdj = lpp->GetAdjust(false);
-		int gunX = gunAdj.x, gunY = gunAdj.y;
-
-		ImGui::SetNextItemWidth(120);
-		if (ImGui::InputInt("Gun H", &gunX, 1, 5)) {
-			gunX = std::clamp(gunX, -64, 64);
-			lpp->SetAdjust(false, vdint2{gunX, gunY});
-		}
-
-		ImGui::SetNextItemWidth(120);
-		if (ImGui::InputInt("Gun V", &gunY, 1, 5)) {
-			gunY = std::clamp(gunY, -64, 64);
-			lpp->SetAdjust(false, vdint2{gunX, gunY});
-		}
+	// Match IDD_LIGHTPEN's horizontal/vertical grid and commit on OK,
+	// as uilightpen.cpp does in OnDataExchange(true).
+	static vdint2 gunAdjust;
+	static vdint2 penAdjust;
+	static int noiseMode = 0;
+	if (ImGui::IsWindowAppearing()) {
+		gunAdjust = lpp->GetAdjust(false);
+		penAdjust = lpp->GetAdjust(true);
+		noiseMode = (int)lpp->GetNoiseMode();
 	}
 
-	// Pen offsets
-	ImGui::SeparatorText("Pen offset");
-	{
-		vdint2 penAdj = lpp->GetAdjust(true);
-		int penX = penAdj.x, penY = penAdj.y;
-
-		ImGui::SetNextItemWidth(120);
-		if (ImGui::InputInt("Pen H", &penX, 1, 5)) {
-			penX = std::clamp(penX, -64, 64);
-			lpp->SetAdjust(true, vdint2{penX, penY});
+	const float footerHeight = ImGui::GetFrameHeightWithSpacing()
+		+ ImGui::GetStyle().ItemSpacing.y * 2.0f;
+	ImGui::BeginChild("##LightPenBody", ImVec2(0, -footerHeight));
+	ImGui::TextWrapped("Different hardware and games vary in light pen/gun "
+		"positioning. Tweak adjustment values so that the emulation cursor "
+		"matches target indicators in the game. You can also use the "
+		"Recalibrate option to do this interactively.");
+	ImGui::Spacing();
+	if (ImGui::BeginTable("##Offsets", 3, ImGuiTableFlags_SizingStretchProp)) {
+		ImGui::TableSetupColumn("##Device", ImGuiTableColumnFlags_WidthFixed,
+			ImGui::CalcTextSize("Light gun").x + 16.0f);
+		ImGui::TableSetupColumn("Horizontal");
+		ImGui::TableSetupColumn("Vertical");
+		ImGui::TableHeadersRow();
+		vdint2 *adjustments[] = { &gunAdjust, &penAdjust };
+		const char *labels[] = { "Light gun", "Light pen" };
+		for (int row = 0; row < 2; ++row) {
+			ImGui::PushID(row);
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(labels[row]);
+			ImGui::TableNextColumn();
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			if (ImGui::InputInt("##Horizontal", &adjustments[row]->x, 1, 5))
+				adjustments[row]->x = std::clamp(adjustments[row]->x, -64, 64);
+			ImGui::TableNextColumn();
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			if (ImGui::InputInt("##Vertical", &adjustments[row]->y, 1, 5))
+				adjustments[row]->y = std::clamp(adjustments[row]->y, -64, 64);
+			ImGui::PopID();
 		}
-
-		ImGui::SetNextItemWidth(120);
-		if (ImGui::InputInt("Pen V", &penY, 1, 5)) {
-			penY = std::clamp(penY, -64, 64);
-			lpp->SetAdjust(true, vdint2{penX, penY});
-		}
+		ImGui::EndTable();
 	}
-
-	// Noise mode
-	ImGui::SeparatorText("Noise");
+	ImGui::Spacing();
 	static const char *kNoiseModes[] = {
 		"None", "Low (CX-75 + 800)", "High (CX-75 + XL/XE)"
 	};
-	int noiseMode = (int)lpp->GetNoiseMode();
 	if (noiseMode < 0 || noiseMode >= 3) noiseMode = 0;
-	if (ImGui::Combo("Noise mode", &noiseMode, kNoiseModes, 3))
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Noise mode");
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(-FLT_MIN);
+	ImGui::Combo("##NoiseMode", &noiseMode, kNoiseModes, 3);
+	ImGui::EndChild();
+	ImGui::Separator();
+	ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x
+		- 160.0f - ImGui::GetStyle().ItemSpacing.x);
+	if (ImGui::Button("OK", ImVec2(80.0f, 0))) {
+		lpp->SetAdjust(false, gunAdjust);
+		lpp->SetAdjust(true, penAdjust);
 		lpp->SetNoiseMode((ATLightPenNoiseMode)noiseMode);
+		state.showLightPen = false;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Cancel", ImVec2(80.0f, 0)))
+		state.showLightPen = false;
 
 	ImGui::End();
 }

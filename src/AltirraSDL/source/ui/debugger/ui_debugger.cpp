@@ -686,6 +686,10 @@ static void ATConsoleRequestFileSDL(ATDebuggerRequestFileEvent& event) {
 		{ "All files", "*" },
 	};
 
+	// This synchronous picker blocks the main loop, so its lease ends
+	// here rather than in the asynchronous picker poll.
+	const bool wasRunning = g_sim.IsRunning();
+	g_sim.Suspend();
 	ATDebuggerFileDialogSyncState state;
 
 	if (event.mbSave) {
@@ -705,6 +709,8 @@ static void ATConsoleRequestFileSDL(ATDebuggerRequestFileEvent& event) {
 	}
 
 	event.mPath = state.mPath;
+	if (wasRunning && !g_sim.IsPaused())
+		g_sim.Resume();
 #endif
 }
 

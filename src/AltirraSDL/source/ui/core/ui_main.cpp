@@ -1141,6 +1141,24 @@ void ATUIApplyTheme() {
 
 	ImGuiStyle& style = ImGui::GetStyle();
 	style.FrameRounding = 2.0f;
+	// Empty fields and unchecked boxes must remain visibly interactive,
+	// including on the nearly white surfaces in the light theme.
+	style.FrameBorderSize = 1.0f;
+	style.Colors[ImGuiCol_Border] = dark
+		? ImVec4(0.38f, 0.42f, 0.48f, 1.0f)
+		: ImVec4(0.55f, 0.59f, 0.65f, 1.0f);
+	style.Colors[ImGuiCol_TextDisabled] = dark
+		? ImVec4(0.64f, 0.68f, 0.74f, 1.0f)
+		: ImVec4(0.40f, 0.44f, 0.50f, 1.0f);
+	style.Colors[ImGuiCol_Button] = dark
+		? ImVec4(0.20f, 0.24f, 0.29f, 1.0f)
+		: ImVec4(0.88f, 0.90f, 0.93f, 1.0f);
+	style.Colors[ImGuiCol_ButtonHovered] = dark
+		? ImVec4(0.27f, 0.36f, 0.47f, 1.0f)
+		: ImVec4(0.76f, 0.85f, 0.96f, 1.0f);
+	style.Colors[ImGuiCol_ButtonActive] = dark
+		? ImVec4(0.31f, 0.45f, 0.61f, 1.0f)
+		: ImVec4(0.58f, 0.75f, 0.95f, 1.0f);
 	style.WindowRounding = 4.0f;
 	style.GrabRounding = 2.0f;
 
@@ -1591,7 +1609,7 @@ static void CopyFrameToClipboard(ATSimulator& sim, bool trueAspect) {
 static void RenderStatusOverlay(ATSimulator &sim) {
 	bool showFPS = ATUIGetShowFPS();
 	bool showIndicators = ATUIGetDisplayIndicators();
-	bool paused = sim.IsPaused();
+	bool paused = sim.IsPaused() || ATUIIsFileDialogPaused();
 	bool recording = ATUIIsRecording();
 
 	// Check for any active drive or cassette activity
@@ -1891,7 +1909,7 @@ static void ATUIQuickBarSameLine() {
 }
 
 static bool ATUIQuickBarSuppressedByDialog(const ATUIState& state) {
-	return state.fileDialogPending ||
+	return ATUIIsFileDialogPaused() || state.fileDialogPending ||
 		state.showExitConfirm ||
 		state.showSystemConfig ||
 		state.showDiskManager ||

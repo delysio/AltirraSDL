@@ -6,6 +6,16 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <imgui.h>
+#include <algorithm>
+
+// Configuration dialogs open within the visible canvas, including when
+// their preferred desktop size exceeds the current window dimensions.
+inline ImVec2 ATUIFitDialogSize(ImVec2 preferred) {
+	const ImVec2 available = ImGui::GetMainViewport()->WorkSize;
+	return ImVec2(
+		std::min(preferred.x, std::max(1.0f, available.x - 32.0f)),
+		std::min(preferred.y, std::max(1.0f, available.y - 32.0f)));
+}
 
 struct SDL_Window;
 struct SDL_Renderer;

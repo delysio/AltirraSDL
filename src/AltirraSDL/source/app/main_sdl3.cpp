@@ -83,6 +83,7 @@ extern "C" bool ATWasmBrokerIsActive();
 #include "ui_mode.h"
 #include "options.h"
 #include "ui_main.h"
+#include "ui_file_dialog_sdl3.h"
 #include "ui_autosuggest.h"
 #include "ui_debugger.h"
 #include "debugger.h"   // IATDebugger + ATDebuggerSymbolLoadMode (used in the __EMSCRIPTEN__ startup block below)
@@ -2917,6 +2918,22 @@ int main(int argc, char *argv[]) {
 			// our loop.  SDL_Delay would block the single JS thread
 			// unnecessarily.
 			SDL_Delay(100);
+#endif
+			return;
+		}
+
+		const bool mobileFileBrowserOpen = ATUIIsGamingMode()
+			&& (g_mobileState.currentScreen == ATMobileUIScreen::FileBrowser
+				|| g_mobileState.currentScreen == ATMobileUIScreen::GameBrowser);
+		if (ATUIPollFileDialogPause(mobileFileBrowserOpen)) {
+			for (int i = 0; i < 16; ++i) {
+				if (!ATUIGetQueue().Run())
+					break;
+			}
+			g_sim.FlushDeferredEvents();
+			RenderAndPresent();
+#ifndef __EMSCRIPTEN__
+			SDL_Delay(16);
 #endif
 			return;
 		}

@@ -58,7 +58,7 @@ static void FormatTapeTime(char *buf, size_t bufSize, float seconds) {
 }
 
 void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
-	ImGui::SetNextWindowSize(ImVec2(460, 170), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ATUIFitDialogSize(ImVec2(460, 170)), ImGuiCond_Appearing);
 	ImGui::SetNextWindowSizeConstraints(ImVec2(360, 150), ImVec2(FLT_MAX, FLT_MAX));
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
@@ -138,14 +138,16 @@ void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *w
 	bool paused = loaded && cas.IsPaused();
 	bool stopped = !loaded || cas.IsStopped();
 
-	float btnW = 50.0f;
-	ImVec4 activeColor(0.2f, 0.7f, 0.2f, 1.0f);  // green tint for active
+	const float btnW = (ImGui::GetContentRegionAvail().x
+		- ImGui::GetStyle().ItemSpacing.x * 5.0f) / 6.0f;
+	const ImVec4 activeColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
 
 	// Stop
 	if (stopped) ImGui::PushStyleColor(ImGuiCol_Button, activeColor);
 	if (ImGui::Button("Stop", ImVec2(btnW, 0)) && loaded && !stopped)
 		cas.Stop();
 	if (stopped) ImGui::PopStyleColor();
+	ImGui::SetItemTooltip("Stop the tape");
 	ImGui::SameLine();
 
 	// Pause
@@ -153,6 +155,7 @@ void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *w
 	if (ImGui::Button("Pause", ImVec2(btnW, 0)) && loaded)
 		cas.SetPaused(!paused);
 	if (paused) ImGui::PopStyleColor();
+	ImGui::SetItemTooltip("Pause or resume the tape");
 	ImGui::SameLine();
 
 	// Play
@@ -160,23 +163,29 @@ void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *w
 	if (ImGui::Button("Play", ImVec2(btnW, 0)) && loaded && !playing)
 		cas.Play();
 	if (playing && !paused) ImGui::PopStyleColor();
+	ImGui::SetItemTooltip("Play the tape");
 	ImGui::SameLine();
 
 	// Seek Start (rewind to beginning)
-	if (ImGui::Button("|<", ImVec2(34.0f, 0)) && loaded)
+	if (ImGui::Button("|<", ImVec2(btnW, 0)) && loaded)
 		cas.SeekToTime(0.0f);
+	ImGui::SetItemTooltip("Rewind to the beginning");
 	ImGui::SameLine();
 
 	// Seek End
-	if (ImGui::Button(">|", ImVec2(34.0f, 0)) && loaded)
+	if (ImGui::Button(">|", ImVec2(btnW, 0)) && loaded)
 		cas.SeekToTime(cas.GetLength());
+	ImGui::SetItemTooltip("Seek to the end");
 	ImGui::SameLine();
 
 	// Record
-	if (recording) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+	if (recording) ImGui::PushStyleColor(ImGuiCol_Button, ATUIIsDarkTheme()
+		? ImVec4(0.55f, 0.16f, 0.20f, 1.0f)
+		: ImVec4(0.96f, 0.78f, 0.78f, 1.0f));
 	if (ImGui::Button("Rec", ImVec2(btnW, 0)) && loaded)
 		cas.Record();
 	if (recording) ImGui::PopStyleColor();
+	ImGui::SetItemTooltip("Record to the tape");
 
 	ImGui::End();
 }

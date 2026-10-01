@@ -113,6 +113,33 @@ class TestDialogOpenClose:
         assert not emu.get_dialog_state(dialog), f"{dialog} should be closed"
 
 
+def test_profile_rename_done_saves_typed_name(emu):
+    emu.open_dialog("Profiles")
+    emu.wait_frames(3)
+    emu.click("Profiles", "Add Profile")
+    emu.wait_frames(4)
+    # Adding a profile should focus and select its initial name.
+    emu.send("send_text Rename button regression")
+    emu.wait_frames(3)
+    emu.click("Profiles", "Done")
+    emu.wait_frames(3)
+    emu.assert_item_exists("Profiles", "Rename button regression")
+    emu.send('right_click "Profiles" "Rename button regression"')
+    emu.wait_frames(3)
+    emu.click("", "Rename")
+    emu.wait_frames(4)
+    emu.send("send_text Discard this rename")
+    emu.wait_frames(3)
+    emu.send("key escape")
+    emu.wait_frames(3)
+    assert emu.get_dialog_state("Profiles")
+    emu.assert_item_exists("Profiles", "Rename button regression")
+    emu.send('right_click "Profiles" "Rename button regression"')
+    emu.wait_frames(3)
+    emu.click("", "Delete")
+    emu.wait_frames(3)
+
+
 class TestEmulationControl:
     """Verify emulation state commands."""
 
