@@ -25,6 +25,7 @@
 #include "uirender.h"
 #include "devicemanager.h"
 #include "ui_main.h"
+#include "ui_search.h"
 #include "ui_autosuggest.h"
 #include "ui_debugger.h"
 #include "ui_textselection.h"
@@ -1165,7 +1166,25 @@ static const ATUICommand kSDL3CommandsExtra[] = {
 // Original SDL3 command table (display/global/debugger context)
 // =========================================================================
 
+extern void ATUIShowStateFileDialog(SDL_Window *window, bool save);
+extern ATUIState g_uiState;
+
 static const ATUICommand kSDL3Commands[] = {
+	// User-requested search surface for existing menu-only actions.
+	{ "File.SaveState", [] { ATUIShowStateFileDialog(g_pWindow, true); }, IsNetplaySessionNotEngaged, nullptr, nullptr },
+	{ "File.LoadState", [] { ATUIShowStateFileDialog(g_pWindow, false); }, IsNetplaySessionNotEngaged, nullptr, nullptr },
+	{ "File.QuickSaveState", ATUIQuickSaveState, IsNetplaySessionNotEngaged, nullptr, nullptr },
+	{ "File.QuickLoadState", ATUIQuickLoadState, [] { return IsNetplaySessionNotEngaged() && ATUIHasQuickSaveState(); }, nullptr, nullptr },
+	{ "File.GameLibrary", [] { g_uiState.showGameLibrary = true; }, nullptr, nullptr, nullptr },
+	{ "System.Profiles", [] { g_uiState.showProfiles = true; }, IsNetplaySessionNotEngaged, nullptr, nullptr },
+	{ "UI.GlobalSearch", ATUIOpenGlobalSearch, nullptr, nullptr, nullptr },
+	{ "Record.RecordRawAudio", [] { ATUIRecordRawAudio(g_pWindow); }, [] { return !ATUIIsRecording(); }, nullptr, nullptr },
+	{ "Record.RecordAudio", [] { ATUIRecordAudio(g_pWindow); }, [] { return !ATUIIsRecording(); }, nullptr, nullptr },
+	{ "Record.RecordSAPTypeR", [] { ATUIRecordSAP(g_pWindow); }, [] { return !ATUIIsRecording(); }, nullptr, nullptr },
+	{ "Record.RecordVGM", [] { ATUIRecordVGM(g_pWindow); }, [] { return !ATUIIsRecording(); }, nullptr, nullptr },
+	{ "Record.RecordVideo", ATUIShowVideoRecordingDialog, [] { return !ATUIIsRecording(); }, nullptr, nullptr },
+	{ "Record.StopRecording", ATUIStopRecording, ATUIIsRecording, nullptr, nullptr },
+	{ "Record.PauseResumeRecording", ATUIToggleRecordingPause, ATUIIsVideoRecording, nullptr, nullptr },
 	// Display context
 	{ "System.PulseWarpOn",            CmdPulseWarpOn,          nullptr, nullptr, nullptr },
 	{ "System.PulseWarpOff",           CmdPulseWarpOff,         nullptr, nullptr, nullptr },

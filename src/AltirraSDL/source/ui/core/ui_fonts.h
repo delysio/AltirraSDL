@@ -9,7 +9,7 @@
 struct ImFont;
 class ATSimulator;
 
-// Discover fonts under <exe>/fonts, load registry settings, build the
+// Discover installed and application fonts, load registry settings, build the
 // initial font atlas.  Call after ImGui::CreateContext() but BEFORE the
 // renderer backend is initialised — the backend picks up the atlas on its
 // first NewFrame.
@@ -24,6 +24,8 @@ void ATUIFontsRebuildIfDirty();
 // monospaced font is available.
 ImFont *ATUIGetFontUI();
 ImFont *ATUIGetFontMono();
+// Stronger weight from the selected UI family, with a regular fallback.
+ImFont *ATUIGetFontHeading();
 
 // Material Icons font, sized for use as a leading glyph on touch
 // buttons / list rows.  Returns null if the embedded blob failed to

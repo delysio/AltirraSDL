@@ -15,6 +15,8 @@
 #include <imgui_impl_opengl3.h>
 #include "display_backend_gl33.h"
 #include "display_backend.h"
+#include "ui_search.h"
+#include "ui_profile_services.h"
 #include "../../input/touch_widgets.h"
 #include "../../app/ui_file_dialog_sdl3.h"
 
@@ -157,6 +159,7 @@ struct ATDeferredAction {
 	VDStringW path2;   // second path for two-file operations (SAP->EXE, tape analysis)
 	vdfastvector<uint8> payload;
 	int mInt = 0;
+	uint32 mProfile = kATProfileId_Invalid;
 };
 
 static std::mutex g_deferredMutex;
@@ -179,6 +182,15 @@ void ATUIPushDeferred(ATDeferredActionType type, const char *utf8path, int extra
 	action.path = VDTextU8ToW(utf8path, -1);
 	action.mInt = extra;
 
+	std::lock_guard<std::mutex> lock(g_deferredMutex);
+	g_deferredActions.push_back(std::move(action));
+}
+
+void ATUIBootWithProfile(const char *utf8path, uint32 profile) {
+	ATDeferredAction action;
+	action.type = kATDeferred_BootImage;
+	action.path = VDTextU8ToW(utf8path, -1);
+	action.mProfile = profile;
 	std::lock_guard<std::mutex> lock(g_deferredMutex);
 	g_deferredActions.push_back(std::move(action));
 }
@@ -336,6 +348,9 @@ void ATUIPollDeferredActions() {
 					break;
 				}
 #endif
+
+				if (a.mProfile != kATProfileId_Invalid)
+					ATUIActivateGameProfile(a.mProfile);
 
 				const bool boot = a.type == kATDeferred_BootImage ||
 					a.type == kATDeferred_BootProgramData;
@@ -1923,6 +1938,7 @@ static bool ATUIQuickBarSuppressedByDialog(const ATUIState& state) {
 		state.showInputMappings ||
 		state.showInputSetup ||
 		state.showProfiles ||
+		state.showGlobalSearch ||
 		state.showCommandLineHelp ||
 		state.showChangeLog ||
 		state.showCompatWarning ||
@@ -2328,6 +2344,7 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showSetupWizard && !ATUIIsGamingMode())
 		ATUIRenderSetupWizard(sim, state, window);
 	if (state.showKeyboardShortcuts) ATUIRenderKeyboardShortcuts(state);
+	ATUIRenderGlobalSearch(state);
 	if (state.showKeyboardCustomize) ATUIRenderKeyboardCustomize(state);
 	if (state.showCompatDB)          ATUIRenderCompatDB(sim, state);
 	if (state.showAdvancedConfig)    ATUIRenderAdvancedConfig(state);

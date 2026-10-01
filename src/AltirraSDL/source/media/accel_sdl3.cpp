@@ -19,6 +19,7 @@
 #include "inputdefs.h"
 #include "accel_sdl3.h"
 #include "ui_main.h"
+#include "macos_menubar.h"
 
 extern ATUICommandManager g_ATUICommandMgr;
 // =========================================================================
@@ -86,6 +87,7 @@ namespace {
 	};
 
 	const VDAccelTableEntry kATDefaultAccelTableGlobal[] = {
+		{ "UI.GlobalSearch", 0, { kATInputCode_KeyK, CTRL } },
 		{ "Cheat.CheatDialog",             0, { kATInputCode_KeyH,   ALT+SHIFT } },
 		{ "File.BootImage",                0, { kATInputCode_KeyB,   ALT } },
 		{ "File.OpenImage",                0, { kATInputCode_KeyO,   ALT } },
@@ -488,6 +490,7 @@ const char *ATUIGetShortcutStringForCommand(const char *command) {
 
 void ATUIInvalidateShortcutCache() {
 	g_shortcutCacheValid = false;
+	ATMacMenuBarRefreshShortcuts();
 }
 
 // =========================================================================

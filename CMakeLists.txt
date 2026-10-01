@@ -724,6 +724,19 @@ if(ALTIRRA_SDL3)
         ${imgui_SOURCE_DIR}/misc/cpp
     )
     target_link_libraries(imgui PUBLIC SDL3::SDL3)
+    # Optional native font renderer. Named OpenType variable instances need
+    # FreeType; stb_truetype and embedded fonts still work without it.
+    option(ALTIRRA_ENABLE_FREETYPE "Use installed FreeType for variable fonts" ON)
+    if(ALTIRRA_ENABLE_FREETYPE AND NOT ANDROID AND NOT ALTIRRA_WASM)
+        find_package(Freetype 2.6.1 QUIET)
+        if(Freetype_FOUND)
+            target_sources(imgui PRIVATE
+                src/AltirraSDL/source/ui/core/ui_font_freetype.cpp)
+            set_property(SOURCE src/AltirraSDL/source/ui/core/ui_font_freetype.cpp
+                APPEND PROPERTY INCLUDE_DIRECTORIES
+                ${FREETYPE_INCLUDE_DIRS} ${imgui_SOURCE_DIR}/misc/freetype)
+        endif()
+    endif()
     # Enable test engine hooks — our ui_testmode.cpp provides the hook implementations.
     # PUBLIC so the define propagates to AltirraSDL (which includes imgui_internal.h).
     target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_TEST_ENGINE)

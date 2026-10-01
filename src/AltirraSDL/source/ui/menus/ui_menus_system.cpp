@@ -6,6 +6,7 @@
 #include <vd2/system/vdtypes.h>
 
 #include "ui_main.h"
+#include "ui_profile_services.h"
 #include "ui_menus_internal.h"
 #include "simulator.h"
 #include "autosavemanager.h"
@@ -68,9 +69,8 @@ void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 			VDStringW name = ATSettingsProfileGetName(0);
 			VDStringA nameU8 = VDTextWToU8(name);
 			if (ImGui::MenuItem(nameU8.c_str(), nullptr, currentId == 0)) {
-				if (currentId != 0) {
-					ATSettingsSwitchProfile(0);
-					sim.Resume();
+				if (currentId != 0 || ATUIIsGameProfileSession()) {
+					ATUISwitchProfile(0);
 				}
 			}
 		}
@@ -84,9 +84,8 @@ void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 			VDStringW name = ATSettingsProfileGetName(id);
 			VDStringA nameU8 = VDTextWToU8(name);
 			if (ImGui::MenuItem(nameU8.c_str(), nullptr, currentId == id)) {
-				if (currentId != id) {
-					ATSettingsSwitchProfile(id);
-					sim.Resume();
+				if (currentId != id || ATUIIsGameProfileSession()) {
+					ATUISwitchProfile(id);
 				}
 			}
 		}

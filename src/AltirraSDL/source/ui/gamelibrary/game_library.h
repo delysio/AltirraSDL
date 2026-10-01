@@ -103,6 +103,8 @@ struct GameEntry {
 	VDStringW                mArtPath;
 	uint64_t                 mLastPlayed = 0;
 	uint32_t                 mPlayCount = 0;
+	// Fork extension: shared profile reference; UINT32_MAX uses current setup.
+	uint32_t                 mLaunchProfileId = UINT32_MAX;
 	GameMetadata             mMeta;
 
 	// True when this entry appeared in the library during this session

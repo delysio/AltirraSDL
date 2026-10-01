@@ -13,6 +13,7 @@
 #include <vd2/system/unknown.h>
 
 #include "ui_main.h"
+#include "ui_search.h"
 #include "ui_system_internal.h"
 #include "simulator.h"
 #include "constants.h"
@@ -234,6 +235,7 @@ void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state) {
 
 	// Right content
 	ImGui::BeginChild("##SysCfgContent", ImVec2(0, -footerHeight));
+	const bool previousSearchHooks = ATUIBeginSearchSettingsPage();
 	switch (state.systemConfigCategory) {
 	case kCat_Overview:       RenderOverviewCategory(sim); break;
 	case kCat_Recommendations: RenderRecommendationsCategory(sim); break;
@@ -277,6 +279,8 @@ void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state) {
 		break;
 	}
 	ImGui::EndChild();
+
+	ATUIEndSearchSettingsPage(previousSearchHooks);
 
 	// OK button — matches Windows DEFPUSHBUTTON "OK"
 	ImGui::Separator();

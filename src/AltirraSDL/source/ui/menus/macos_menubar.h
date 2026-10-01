@@ -6,6 +6,14 @@
 #ifndef f_AT_MACOS_MENUBAR_H
 #define f_AT_MACOS_MENUBAR_H
 
+struct ATMacSearchMenuState {
+	bool present = false;
+	unsigned int key = 0;
+	bool control = false;
+	bool shift = false;
+	bool option = false;
+};
+
 #ifdef VD_OS_MACOS
 
 // Initialise the native macOS menu bar.  Call once after SDL window
@@ -19,12 +27,18 @@ void ATMacMenuBarShutdown();
 // Returns true when the native macOS menu bar is active and the ImGui
 // menu bar should be skipped.
 bool ATMacMenuBarIsActive();
+void ATMacMenuBarRefreshShortcuts();
+ATMacSearchMenuState ATMacMenuBarGetSearchState();
+bool ATMacMenuBarInvokeSearch();
 
 #else // !VD_OS_MACOS
 
 inline void ATMacMenuBarInit() {}
 inline void ATMacMenuBarShutdown() {}
 inline bool ATMacMenuBarIsActive() { return false; }
+inline void ATMacMenuBarRefreshShortcuts() {}
+inline ATMacSearchMenuState ATMacMenuBarGetSearchState() { return {}; }
+inline bool ATMacMenuBarInvokeSearch() { return false; }
 
 #endif
 

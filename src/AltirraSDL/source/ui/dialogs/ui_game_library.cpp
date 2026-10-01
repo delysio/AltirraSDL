@@ -39,6 +39,8 @@
 #include "ui_game_metadata.h"
 #include "media/metadata_scraper.h"
 #include "ui_file_dialog_sdl3.h"
+#include "ui_profile_services.h"
+#include <algorithm>
 
 // External glue — defined elsewhere in the SDL3 front-end.
 extern VDStringA ATGetConfigDir();
@@ -83,6 +85,7 @@ const SDL_DialogFileFilter kAddFileFilters[] = {
 // sort across frames while the dialog is open.
 // -----------------------------------------------------------------------
 int                 g_selectedEntry    = -1;
+std::vector<int> g_selectedEntries;
 char                g_filterBuf[128]   = {};
 int                 g_sortColumn       = 0;     // 0 Name 1 Type 2 LastPlayed 3 Plays
 bool                g_sortDescending   = false;
@@ -188,7 +191,12 @@ void BootVariant(ATGameLibrary &lib, size_t entryIdx, size_t variantIdx) {
 
 	const auto &var = entries[entryIdx].mVariants[variantIdx];
 	VDStringA pathU8 = VDTextWToU8(var.mPath);
-	ATUIPushDeferred(kATDeferred_BootImage, pathU8.c_str(), 0);
+	const uint32 profile = entries[entryIdx].mLaunchProfileId;
+	ATUIBootWithProfile(pathU8.c_str(), profile);
+	// The deferred action reports the error on the main thread. Keep the
+	// library open and do not record a play for a missing assigned setup.
+	if (profile != kATProfileId_Invalid && !ATSettingsIsValidProfile(profile))
+		return;
 	lib.RecordPlay(entryIdx);
 	g_pendingClose = true;
 }
@@ -333,7 +341,8 @@ void CenterInRow(float rowH) {
 // mouse.
 void HandleTableKeys(ATGameLibrary &lib) {
 	// Never steal keys from the filter box or any other active widget.
-	if (ImGui::IsAnyItemActive())
+	if (ImGui::IsAnyItemActive()
+		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
 		return;
 	if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
 		return;
@@ -385,6 +394,7 @@ void HandleTableKeys(ATGameLibrary &lib) {
 
 	if (next != cur && next >= 0) {
 		g_selectedEntry = g_order[next];
+		g_selectedEntries.assign(1, g_selectedEntry);
 		g_scrollToSelected = true;
 	}
 }
@@ -498,7 +508,7 @@ void RenderTabGames(ATGameLibrary &lib) {
 	// resolves against whatever the cursor happens to be at, which is
 	// not the same for all three once SameLine has moved it.
 	const float bodyH = ImGui::GetContentRegionAvail().y
-		- ImGui::GetFrameHeightWithSpacing() - 4.0f;
+		- ImGui::GetFrameHeightWithSpacing() * 2 - 4.0f;
 	const float tableW = detailsW > 0.0f
 		? totalW - detailsW - splitterW
 		: 0.0f;
@@ -587,12 +597,19 @@ void RenderTabGames(ATGameLibrary &lib) {
 		// Keep the selection meaningful: a filter or a rescan can drop
 		// the selected entry out of the visible set, and a details pane
 		// describing a game that is not on screen is worse than none.
+		g_selectedEntries.erase(std::remove_if(g_selectedEntries.begin(),
+			g_selectedEntries.end(), [&](int index) {
+				return std::find(g_order.begin(), g_order.end(), index) == g_order.end();
+			}), g_selectedEntries.end());
 		int selectedRow = -1;
 		for (size_t i = 0; i < g_order.size(); ++i) {
 			if (g_order[i] == g_selectedEntry) { selectedRow = (int)i; break; }
 		}
 		if (selectedRow < 0) {
 			g_selectedEntry = g_order.empty() ? -1 : g_order[0];
+			g_selectedEntries.clear();
+			if (g_selectedEntry >= 0)
+				g_selectedEntries.push_back(g_selectedEntry);
 			selectedRow = g_order.empty() ? -1 : 0;
 		}
 
@@ -619,13 +636,21 @@ void RenderTabGames(ATGameLibrary &lib) {
 				ImGui::TableSetColumnIndex(0);
 				const ImVec2 rowMin = ImGui::GetCursorScreenPos();
 				const float cellW = ImGui::GetContentRegionAvail().x;
-				bool selected = (g_selectedEntry == idx);
+				bool selected = std::find(g_selectedEntries.begin(), g_selectedEntries.end(), idx)
+					!= g_selectedEntries.end();
 				if (ImGui::Selectable("##row", selected,
 					ImGuiSelectableFlags_SpanAllColumns |
 					ImGuiSelectableFlags_AllowDoubleClick,
 					ImVec2(0, rowH)))
 				{
-					g_selectedEntry = idx;
+					if (!ImGui::GetIO().KeyCtrl)
+						g_selectedEntries.clear();
+					auto selectedIt = std::find(g_selectedEntries.begin(), g_selectedEntries.end(), idx);
+					if (selectedIt != g_selectedEntries.end())
+						g_selectedEntries.erase(selectedIt);
+					else
+						g_selectedEntries.push_back(idx);
+					g_selectedEntry = g_selectedEntries.empty() ? -1 : g_selectedEntries.back();
 					if (ImGui::IsMouseDoubleClicked(0))
 						LaunchSelected(&lib, idx);
 				}
@@ -641,6 +666,8 @@ void RenderTabGames(ATGameLibrary &lib) {
 				// different game than the one the user pointed at.
 				if (ImGui::BeginPopupContextItem("##rowmenu")) {
 					g_selectedEntry = idx;
+					if (std::find(g_selectedEntries.begin(), g_selectedEntries.end(), idx) == g_selectedEntries.end())
+						g_selectedEntries.assign(1, idx);
 					if (ImGui::MenuItem("Launch", nullptr, false,
 						!e.mVariants.empty()))
 					{
@@ -747,6 +774,48 @@ void RenderTabGames(ATGameLibrary &lib) {
 	// Keyboard browsing runs after the table so it can see this frame's
 	// row order (which is only known once the sort spec has been read).
 	HandleTableKeys(lib);
+
+	// User-requested Desktop extension: several games share one profile.
+	if (g_selectedEntry >= 0 && (size_t)g_selectedEntry < lib.GetEntries().size()) {
+		auto& selected = lib.GetEntries()[g_selectedEntry];
+		const uint32 current = selected.mLaunchProfileId;
+		VDStringA profileName = current == kATProfileId_Invalid
+			? VDStringA("Current configuration")
+			: ATSettingsIsValidProfile(current)
+				? VDTextWToU8(ATSettingsProfileGetName(current)) : VDStringA("Missing profile - choose another");
+		for (int index : g_selectedEntries)
+			if (index >= 0 && (size_t)index < lib.GetEntries().size()
+				&& lib.GetEntries()[index].mLaunchProfileId != current)
+				profileName = "Multiple profiles";
+		ImGui::SetNextItemWidth(260);
+		if (ImGui::BeginCombo("Launch profile", profileName.c_str())) {
+			vdfastvector<uint32> profiles;
+			ATSettingsProfileEnum(profiles);
+			profiles.insert(profiles.begin(), 0);
+			profiles.insert(profiles.begin(), kATProfileId_Invalid);
+			for (uint32 id : profiles) {
+				if (id != 0 && id != kATProfileId_Invalid && !ATSettingsProfileGetVisible(id))
+					continue;
+				VDStringA name = id == kATProfileId_Invalid ? VDStringA("Current configuration")
+					: id == 0 ? VDStringA("Global profile") : VDTextWToU8(ATSettingsProfileGetName(id));
+				ImGui::PushID((int)id);
+				if (ImGui::Selectable(name.c_str(), id == current)) {
+					if (g_selectedEntries.empty())
+						g_selectedEntries.push_back(g_selectedEntry);
+					for (int index : g_selectedEntries)
+						if (index >= 0 && (size_t)index < lib.GetEntries().size())
+							lib.GetEntries()[index].mLaunchProfileId = id;
+					lib.SaveCache();
+					GameBrowser_Invalidate();
+				}
+				ImGui::PopID();
+			}
+			ImGui::EndCombo();
+		}
+		ImGui::SetItemTooltip("Ctrl-click games to assign one shared profile to several titles. Launch changes are temporary; update the saved profile explicitly in Profiles.");
+		ImGui::SameLine();
+		ImGui::TextDisabled("Applies to %zu selected", std::max<size_t>(1, g_selectedEntries.size()));
+	}
 
 	// Bottom row: Launch button.
 	bool canLaunch = (g_selectedEntry >= 0)
@@ -1065,6 +1134,16 @@ void ATUIRenderGameLibrary(ATSimulator & /*sim*/, ATUIState &state, SDL_Window *
 	// is what actually swaps them into mEntries.
 	if (lib.IsScanComplete())
 		lib.ConsumeScanResults();
+
+	static const GameEntry *selectionData = nullptr;
+	static size_t selectionCount = 0;
+	if (selectionData != lib.GetEntries().data() || selectionCount != lib.GetEntryCount()) {
+		g_selectedEntry = -1;
+		g_selectedEntries.clear();
+		selectionData = lib.GetEntries().data();
+		selectionCount = lib.GetEntryCount();
+	}
+
 
 	// Same contract for the metadata scraper: workers post results, the
 	// main thread applies them.  Doing it here — not in the tab body —

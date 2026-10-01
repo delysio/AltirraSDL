@@ -21,6 +21,9 @@
 #include "testmode_ipc.h"
 #include "ui_testmode.h"
 #include "ui_main.h"
+#include "ui_search.h"
+#include "ui_fonts.h"
+#include "macos_menubar.h"
 #include "ui_file_dialog_sdl3.h"
 #include "uiaccessors.h"
 #include "ui_frame_capture.h"
@@ -29,6 +32,9 @@
 #include "ui/tools/setup_wizard_shared.h"
 #include "media/metadata_settings.h"
 #include "simulator.h"
+#include "settings.h"
+#include "cpu.h"
+#include "devicemanager.h"
 #include <at/atcore/scheduler.h>
 #include "gtia.h"
 #include "oshelper.h"
@@ -368,6 +374,7 @@ static const DialogMapping kDialogMap[] = {
 	{ "InputMappings",     &ATUIState::showInputMappings },
 	{ "InputSetup",        &ATUIState::showInputSetup },
 	{ "Profiles",          &ATUIState::showProfiles },
+	{ "GlobalSearch",      &ATUIState::showGlobalSearch },
 	{ "CommandLineHelp",   &ATUIState::showCommandLineHelp },
 	{ "ChangeLog",         &ATUIState::showChangeLog },
 	{ "CompatWarning",     &ATUIState::showCompatWarning },
@@ -424,12 +431,38 @@ static std::string BuildStateJson(ATSimulator &sim, ATUIState &state) {
 	json += ",\"emulationTick\":";
 	json += std::to_string(sim.GetScheduler()->GetTick64());
 
+	json += ",\"cpuMode\":" + std::to_string((int)sim.GetCPUMode());
+	json += ",\"cpuMultiplier\":" + std::to_string(sim.GetCPUSubCycles());
+	json += ",\"memoryMode\":" + std::to_string((int)sim.GetMemoryMode());
+	VDStringW devices;
+	sim.GetDeviceManager()->SerializeDevice(nullptr, devices, true, true);
+	json += ",\"devices\":\"" + JsonEscape(VDTextWToU8(devices).c_str()) + "\"";
+
 	// Hardware type
 	auto hwMode = sim.GetHardwareMode();
 	json += ",\"hardwareMode\":";
 	json += std::to_string((int)hwMode);
 
 	json += "}";
+
+	json += ",\"configurationPage\":" + std::to_string(state.systemConfigCategory);
+	json += ",\"profiles\":{\"current\":" + std::to_string(ATSettingsGetCurrentProfileId());
+	json += ",\"temporary\":";
+	json += ATSettingsGetTemporaryProfileMode() ? "true" : "false";
+	json += ",\"items\":[";
+	vdfastvector<uint32> profileIds;
+	ATSettingsProfileEnum(profileIds);
+	for (size_t i = 0; i < profileIds.size(); ++i) {
+		const uint32 id = profileIds[i];
+		if (i) json += ",";
+		json += "{\"id\":" + std::to_string(id);
+		json += ",\"name\":\"" + JsonEscape(VDTextWToU8(ATSettingsProfileGetName(id)).c_str()) + "\"";
+		json += ",\"parent\":" + std::to_string(ATSettingsProfileGetParent(id));
+		json += ",\"categories\":" + std::to_string((uint32)ATSettingsProfileGetCategoryMask(id));
+		json += ",\"savedCategories\":" + std::to_string((uint32)ATSettingsProfileGetSavedCategoryMask(id));
+		json += "}";
+	}
+	json += "]}";
 
 	json += ",\"setupWizard\":{";
 	json += "\"page\":";
@@ -2309,6 +2342,31 @@ static std::string DispatchCommand(std::string cmd, ATSimulator &sim, ATUIState 
 		return {};  // response sent when frames elapse
 	}
 
+	if (verb == "query_fonts") {
+		ImFont *font = ATUIGetFontUI();
+		if (!font || font->Sources.empty()) return JsonError("font not loaded");
+		const ImVec2 size = font->CalcTextSizeA(font->LegacySize, FLT_MAX, 0,
+			"The quick brown fox jumps over the lazy dog. 0123456789");
+		return "{\"ok\":true,\"loader\":\""
+			+ JsonEscape(ImGui::GetIO().Fonts->FontLoaderName)
+			+ "\",\"uiFaceIndex\":" + std::to_string(font->Sources[0]->FontNo)
+			+ ",\"sampleWidth\":" + std::to_string(size.x) + "}";
+	}
+
+	if (verb == "native_search_menu") {
+		const auto native = ATMacMenuBarGetSearchState();
+		return std::string("{\"ok\":true,\"present\":")
+			+ (native.present ? "true" : "false")
+			+ ",\"key\":" + std::to_string(native.key)
+			+ ",\"control\":" + (native.control ? "true" : "false")
+			+ ",\"shift\":" + (native.shift ? "true" : "false")
+			+ ",\"option\":" + (native.option ? "true" : "false") + "}";
+	}
+
+	if (verb == "native_search_activate") {
+		return ATMacMenuBarInvokeSearch() ? JsonOk() : JsonError("native Search unavailable");
+	}
+
 	if (verb == "ui_screenshot") {
 		const std::string path = RestOfLine(cmd);
 		if (path.empty()) return JsonError("usage: ui_screenshot <path>");
@@ -2640,6 +2698,9 @@ static std::string DispatchCommand(std::string cmd, ATSimulator &sim, ATUIState 
 		return "{\"ok\":true,\"commands\":["
 			"\"ping\","
 			"\"query_state\","
+			"\"query_fonts\","
+			"\"native_search_menu\","
+			"\"native_search_activate\","
 			"\"query_window <title>\","
 			"\"query_window_label <title with spaces>\","
 			"\"query_command <command>\","
@@ -3074,6 +3135,7 @@ bool ATTestModeGetMousePosOverride(ImVec2& pos) {
 // is defined and g.TestEngineHookItems is true.
 
 void ImGuiTestEngineHook_ItemAdd(ImGuiContext *ctx, ImGuiID id, const ImRect &bb, const ImGuiLastItemData *item_data) {
+	ATUISearchSettingAdd(ctx, id, bb.Min, bb.Max);
 	// ItemAdd is called for every widget — we just record the bounding box.
 	// The label comes later via ItemInfo.  We store a placeholder entry.
 	if (!g_testModeEnabled || id == 0)
@@ -3081,6 +3143,8 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext *ctx, ImGuiID id, const ImRect &bb
 
 	TestItem item;
 	item.id = id;
+	if (const char *label = ATUISearchSettingLabel(ctx, id))
+		item.label = label;
 	item.rect = bb;
 	item.windowName = GetCurrentWindowName(ctx);
 	item.flags = item_data ? item_data->StatusFlags : ImGuiItemStatusFlags_None;

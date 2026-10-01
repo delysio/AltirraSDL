@@ -791,7 +791,12 @@ static void LaunchGame(ATSimulator &sim, ATMobileUIState &mobileState,
 	}
 
 	VDStringA pathU8 = VDTextWToU8(var.mPath);
-	ATUIPushDeferred(kATDeferred_BootImage, pathU8.c_str());
+	ATUIBootWithProfile(pathU8.c_str(), entry.mLaunchProfileId);
+	// Leave the browser and pause state intact when the deferred action
+	// reports a missing assigned profile; this was not a successful play.
+	if (entry.mLaunchProfileId != kATProfileId_Invalid
+		&& !ATSettingsIsValidProfile(entry.mLaunchProfileId))
+		return;
 	mobileState.gameLoaded = true;
 	mobileState.currentScreen = ATMobileUIScreen::None;
 	s_currentGameVariantPath = var.mPath;

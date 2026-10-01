@@ -86,6 +86,7 @@ target_sources(AltirraSDL PRIVATE
     source/ui/core/ui_command_icons.cpp
     source/ui/core/ui_indicators.cpp
     source/ui/core/ui_fonts.cpp
+    source/ui/core/ui_font_metadata.cpp
     source/ui/core/ui_autosuggest.cpp
     source/ui/core/ui_frame_capture.cpp
 
@@ -139,6 +140,8 @@ target_sources(AltirraSDL PRIVATE
     source/ui/dialogs/ui_cheater.cpp
     source/ui/dialogs/ui_calibrate.cpp
     source/ui/dialogs/ui_profiles.cpp
+    source/ui/dialogs/ui_profile_services.cpp
+    source/ui/core/ui_search.cpp
     source/ui/dialogs/ui_recording.cpp
     source/ui/dialogs/ui_rewind.cpp
     source/ui/dialogs/ui_emuerror.cpp
@@ -683,6 +686,21 @@ endif()
 # The script uses Python stdlib only (json, struct).
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+# Index existing configuration labels for Global Search.
+file(GLOB UI_SEARCH_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/ui/sysconfig/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/ui/firmware/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/ui/core/*.cpp")
+set(UI_SEARCH_INDEX "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_search_settings.inl")
+add_custom_command(OUTPUT ${UI_SEARCH_INDEX}
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_ui_search.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/source ${UI_SEARCH_INDEX}
+    DEPENDS ${UI_SEARCH_INPUTS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_ui_search.py
+    VERBATIM)
+target_sources(AltirraSDL PRIVATE ${UI_SEARCH_INDEX})
+
 # ---------------------------------------------------------------------------
 # ScreenScraper developer key
 # ---------------------------------------------------------------------------
@@ -960,6 +978,27 @@ target_link_libraries(AltirraSDL PRIVATE
     # Dear ImGui
     imgui
 )
+
+# Render named variable instances with the optional installed rasterizer.
+if(ALTIRRA_ENABLE_FREETYPE AND Freetype_FOUND)
+    set_property(SOURCE source/ui/core/ui_fonts.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS ATUI_HAVE_FREETYPE=1)
+endif()
+
+# Use the OS font catalog when available; bundled fonts remain independent
+# of this optional desktop service (Android/WASM do not use it).
+option(ALTIRRA_ENABLE_FONTCONFIG "Use the installed Linux font catalog" ON)
+if(ALTIRRA_ENABLE_FONTCONFIG AND UNIX AND NOT APPLE AND NOT ANDROID AND NOT ALTIRRA_WASM)
+    find_path(ATUI_FONTCONFIG_INCLUDE_DIR fontconfig/fontconfig.h)
+    if(ATUI_FONTCONFIG_INCLUDE_DIR)
+        if(NOT ATUI_FONTCONFIG_INCLUDE_DIR IN_LIST CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+            set_property(SOURCE source/ui/core/ui_fonts.cpp APPEND PROPERTY
+                INCLUDE_DIRECTORIES ${ATUI_FONTCONFIG_INCLUDE_DIR})
+        endif()
+        set_property(SOURCE source/ui/core/ui_fonts.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS ATUI_HAVE_FONTCONFIG=1)
+    endif()
+endif()
 
 if(TARGET altirra_ffmpeg_bundle)
     target_link_libraries(AltirraSDL PRIVATE altirra_ffmpeg_bundle)

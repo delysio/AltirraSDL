@@ -24,6 +24,7 @@
 #include <vd2/system/text.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/strutil.h>
+#include <vd2/Dita/accel.h>
 #include <at/atcore/media.h>
 #include <at/atcore/device.h>
 #include <at/atcore/serializable.h>
@@ -34,6 +35,8 @@
 #include <at/ataudio/pokey.h>
 
 #include "ui_main.h"
+#include "ui_search.h"
+#include "ui_profile_services.h"
 #include "ui_menus_internal.h"
 #include "ui_debugger.h"
 #include "ui_textselection.h"
@@ -167,10 +170,8 @@ static NSMenuItem *AddItem(NSMenu *menu, NSString *title,
 		action:@selector(menuItemClicked:)
 		keyEquivalent:keyEquiv ? keyEquiv : @""];
 	item.target = [ATMenuTarget shared];
-	if (keyEquiv && modMask)
+	if (keyEquiv)
 		item.keyEquivalentModifierMask = modMask;
-	else if (keyEquiv)
-		item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
 	item.state = checked ? NSControlStateValueOn : NSControlStateValueOff;
 	item.enabled = enabled;
 
@@ -947,9 +948,8 @@ static void BuildSystemMenu(NSMenu *menu) {
 			{
 				VDStringW name = ATSettingsProfileGetName(0);
 				AddItem(profMenu, NSStr(name), currentId == 0, true, [=]{
-					if (ATSettingsGetCurrentProfileId() != 0) {
-						ATSettingsSwitchProfile(0);
-						g_sim.Resume();
+					if (ATSettingsGetCurrentProfileId() != 0 || ATUIIsGameProfileSession()) {
+						ATUISwitchProfile(0);
 					}
 				});
 			}
@@ -961,9 +961,8 @@ static void BuildSystemMenu(NSMenu *menu) {
 				VDStringW name = ATSettingsProfileGetName(id);
 				uint32 pid = id;
 				AddItem(profMenu, NSStr(name), currentId == id, true, [=]{
-					if (ATSettingsGetCurrentProfileId() != pid) {
-						ATSettingsSwitchProfile(pid);
-						g_sim.Resume();
+					if (ATSettingsGetCurrentProfileId() != pid || ATUIIsGameProfileSession()) {
+						ATUISwitchProfile(pid);
 					}
 				});
 			}
@@ -1675,7 +1674,57 @@ static void BuildWindowMenu(NSMenu *menu) {
 // Help menu
 // =========================================================================
 
+static void UpdateSearchShortcut(NSMenuItem *item) {
+	item.keyEquivalent = @"";
+	item.keyEquivalentModifierMask = 0;
+	const VDAccelTableEntry *binding = nullptr;
+	for (int ctx = 0; ctx < kATUIAccelContextCount && !binding; ++ctx)
+		binding = ATUIGetAccelByCommand((ATUIAccelContext)ctx, "UI.GlobalSearch");
+	if (!binding || (binding->mAccel.mModifiers & VDUIAccelerator::kModUp)) return;
+	for (int sc = 1; sc < SDL_SCANCODE_COUNT; ++sc) {
+		if (SDLScancodeToVK((SDL_Scancode)sc) != binding->mAccel.mVirtKey) continue;
+		unichar character = 0;
+		if (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F12)
+			character = NSF1FunctionKey + sc - SDL_SCANCODE_F1;
+		else if (sc >= SDL_SCANCODE_F13 && sc <= SDL_SCANCODE_F24)
+			character = NSF13FunctionKey + sc - SDL_SCANCODE_F13;
+		else {
+			switch (sc) {
+				case SDL_SCANCODE_LEFT: character = NSLeftArrowFunctionKey; break;
+				case SDL_SCANCODE_RIGHT: character = NSRightArrowFunctionKey; break;
+				case SDL_SCANCODE_UP: character = NSUpArrowFunctionKey; break;
+				case SDL_SCANCODE_DOWN: character = NSDownArrowFunctionKey; break;
+				case SDL_SCANCODE_HOME: character = NSHomeFunctionKey; break;
+				case SDL_SCANCODE_END: character = NSEndFunctionKey; break;
+				case SDL_SCANCODE_PAGEUP: character = NSPageUpFunctionKey; break;
+				case SDL_SCANCODE_PAGEDOWN: character = NSPageDownFunctionKey; break;
+				case SDL_SCANCODE_DELETE: character = NSDeleteFunctionKey; break;
+				default: {
+					const auto key = SDL_GetKeyFromScancode((SDL_Scancode)sc, SDL_KMOD_NONE, false);
+					if (key > 0 && key < 0x10000) character = (unichar)key;
+					break;
+				}
+			}
+		}
+		if (!character) continue;
+		item.keyEquivalent = [NSString stringWithCharacters:&character length:1];
+		NSUInteger modifiers = 0;
+		if (binding->mAccel.mModifiers & VDUIAccelerator::kModCtrl)
+			modifiers |= NSEventModifierFlagControl;
+		if (binding->mAccel.mModifiers & VDUIAccelerator::kModShift)
+			modifiers |= NSEventModifierFlagShift;
+		if (binding->mAccel.mModifiers & VDUIAccelerator::kModAlt)
+			modifiers |= NSEventModifierFlagOption;
+		item.keyEquivalentModifierMask = modifiers;
+		return;
+	}
+}
+
 static void BuildHelpMenu(NSMenu *menu) {
+	NSMenuItem *search = AddItem(menu, @"Search actions and settings...", false, true, [=]{
+		ATUIOpenGlobalSearch();
+	});
+	UpdateSearchShortcut(search);
 	AddItem(menu, @"Contents", false, false, [=]{});
 	AddItem(menu, @"About", false, true, [=]{
 		g_uiState.showAboutDialog = true;
@@ -1814,6 +1863,10 @@ void ATMacMenuBarInit() {
 
 			item.submenu = sub;
 			[mainMenu addItem:item];
+			if (m.builder == BuildHelpMenu) {
+				BuildHelpMenu(sub); // Native shortcut exists before Help is opened.
+				[NSApp setHelpMenu:sub];
+			}
 		}
 
 		[NSApp setMainMenu:mainMenu];
@@ -1826,6 +1879,7 @@ void ATMacMenuBarInit() {
 void ATMacMenuBarShutdown() {
 	if (!g_macMenuInitialized) return;
 	@autoreleasepool {
+		[NSApp setHelpMenu:nil];
 		[NSApp setMainMenu:nil];
 		g_menuDelegates = nil;
 		ClearMenuActions();
@@ -1835,6 +1889,36 @@ void ATMacMenuBarShutdown() {
 
 bool ATMacMenuBarIsActive() {
 	return g_macMenuInitialized;
+}
+
+void ATMacMenuBarRefreshShortcuts() {
+	if (!g_macMenuInitialized) return;
+	for (NSMenuItem *item in [[NSApp helpMenu] itemArray])
+		if ([item.title isEqualToString:@"Search actions and settings..."])
+			UpdateSearchShortcut(item);
+}
+
+ATMacSearchMenuState ATMacMenuBarGetSearchState() {
+	ATMacSearchMenuState state;
+	if (!g_macMenuInitialized) return state;
+	for (NSMenuItem *item in [[NSApp helpMenu] itemArray]) {
+		if (![item.title isEqualToString:@"Search actions and settings..."]) continue;
+		state.present = true;
+		if (item.keyEquivalent.length) state.key = [item.keyEquivalent characterAtIndex:0];
+		state.control = (item.keyEquivalentModifierMask & NSEventModifierFlagControl) != 0;
+		state.shift = (item.keyEquivalentModifierMask & NSEventModifierFlagShift) != 0;
+		state.option = (item.keyEquivalentModifierMask & NSEventModifierFlagOption) != 0;
+		break;
+	}
+	return state;
+}
+
+bool ATMacMenuBarInvokeSearch() {
+	if (!g_macMenuInitialized) return false;
+	for (NSMenuItem *item in [[NSApp helpMenu] itemArray])
+		if ([item.title isEqualToString:@"Search actions and settings..."])
+			return [NSApp sendAction:item.action to:item.target from:item];
+	return false;
 }
 
 #endif // VD_OS_MACOS

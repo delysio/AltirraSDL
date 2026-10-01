@@ -6,8 +6,10 @@
 #include <mutex>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include "display_backend.h"
 #include "ui_file_dialog_sdl3.h"
+#include "ui_search.h"
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -191,6 +193,17 @@ static void SaveStateCallback(void *, const char * const *filelist, int) {
 static void LoadStateCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
 	ATUIPushDeferred(kATDeferred_LoadState, filelist[0]);
+}
+
+// Shared menu/search actions; preserve the native state-dialog filters.
+void ATUIShowStateFileDialog(SDL_Window *window, bool save) {
+	static const SDL_DialogFileFilter filters[] = {
+		{ "Save States", "atstate2;atstate" }, { "All Files", "*" },
+	};
+	if (save)
+		ATUIShowSaveFileDialog('save', SaveStateCallback, nullptr, window, filters, 1);
+	else
+		ATUIShowOpenFileDialog('save', LoadStateCallback, nullptr, window, filters, 2, false);
 }
 
 void ATUIQuickSaveState() {
@@ -631,15 +644,11 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 	// State save/load
 	{
-		static const SDL_DialogFileFilter stateFilters[] = {
-			{ "Save States", "atstate2;atstate" }, { "All Files", "*" },
-		};
-
 		if (ImGui::MenuItem("Load State..."))
-			ATUIShowOpenFileDialog('save', LoadStateCallback, nullptr, window, stateFilters, 2, false);
+			ATUIShowStateFileDialog(window, false);
 
 		if (ImGui::MenuItem("Save State..."))
-			ATUIShowSaveFileDialog('save', SaveStateCallback, nullptr, window, stateFilters, 1);
+			ATUIShowStateFileDialog(window, true);
 
 		if (ImGui::MenuItem("Quick Load State", nullptr, false, g_pQuickSaveState != nullptr))
 			ATUIQuickLoadState();
@@ -959,52 +968,60 @@ static void RenderCheatMenu(ATSimulator &sim, ATUIState &state) {
 // Record menu
 // =========================================================================
 
+void ATUIRecordRawAudio(SDL_Window *window) {
+	static const SDL_DialogFileFilter rawFilters[] = {
+		{ "Raw PCM Audio", "pcm" }, { "All Files", "*" },
+	};
+	ATUIShowSaveFileDialog('raud', [](void *, const char * const *fl, int) {
+		if (fl && fl[0])
+			ATUIPushDeferred(kATDeferred_StartRecordRaw, fl[0]);
+	}, nullptr, window, rawFilters, 1);
+}
+
+void ATUIRecordAudio(SDL_Window *window) {
+	static const SDL_DialogFileFilter wavFilters[] = {
+		{ "WAV Audio", "wav" }, { "All Files", "*" },
+	};
+	ATUIShowSaveFileDialog('raud', [](void *, const char * const *fl, int) {
+		if (fl && fl[0])
+			ATUIPushDeferred(kATDeferred_StartRecordWAV, fl[0]);
+	}, nullptr, window, wavFilters, 1);
+}
+
+void ATUIRecordSAP(SDL_Window *window) {
+	static const SDL_DialogFileFilter sapFilters[] = {
+		{ "SAP Files", "sap" }, { "All Files", "*" },
+	};
+	ATUIShowSaveFileDialog('rsap', [](void *, const char * const *fl, int) {
+		if (fl && fl[0])
+			ATUIPushDeferred(kATDeferred_StartRecordSAP, fl[0]);
+	}, nullptr, window, sapFilters, 1);
+}
+
+void ATUIRecordVGM(SDL_Window *window) {
+	static const SDL_DialogFileFilter vgmFilters[] = {
+		{ "VGM Audio", "vgm" }, { "All Files", "*" },
+	};
+	ATUIShowSaveFileDialog('rvgm', [](void *, const char * const *fl, int) {
+		if (fl && fl[0])
+			ATUIPushDeferred(kATDeferred_StartRecordVGM, fl[0]);
+	}, nullptr, window, vgmFilters, 1);
+}
+
 static void RenderRecordMenu(ATSimulator &sim, SDL_Window *window) {
 	bool recording = ATUIIsRecording();
 
-	if (ImGui::MenuItem("Record Raw Audio...", nullptr, false, !recording)) {
-		static const SDL_DialogFileFilter rawFilters[] = {
-			{ "Raw PCM Audio", "pcm" }, { "All Files", "*" },
-		};
-		ATUIShowSaveFileDialog('raud', [](void *, const char * const *fl, int) {
-			if (fl && fl[0])
-				ATUIPushDeferred(kATDeferred_StartRecordRaw, fl[0]);
-		}, nullptr, window, rawFilters, 1);
-	}
-
-	if (ImGui::MenuItem("Record Audio...", nullptr, false, !recording)) {
-		static const SDL_DialogFileFilter wavFilters[] = {
-			{ "WAV Audio", "wav" }, { "All Files", "*" },
-		};
-		ATUIShowSaveFileDialog('raud', [](void *, const char * const *fl, int) {
-			if (fl && fl[0])
-				ATUIPushDeferred(kATDeferred_StartRecordWAV, fl[0]);
-		}, nullptr, window, wavFilters, 1);
-	}
-
+	if (ImGui::MenuItem("Record Raw Audio...", nullptr, false, !recording))
+		ATUIRecordRawAudio(window);
+	if (ImGui::MenuItem("Record Audio...", nullptr, false, !recording))
+		ATUIRecordAudio(window);
 	if (ImGui::MenuItem("Record Video...", nullptr, ATUIIsVideoRecording(), !recording))
 		ATUIShowVideoRecordingDialog();
 
-	if (ImGui::MenuItem("Record SAP Type R...", nullptr, false, !recording)) {
-		static const SDL_DialogFileFilter sapFilters[] = {
-			{ "SAP Files", "sap" }, { "All Files", "*" },
-		};
-		ATUIShowSaveFileDialog('rsap', [](void *, const char * const *fl, int) {
-			if (fl && fl[0])
-				ATUIPushDeferred(kATDeferred_StartRecordSAP, fl[0]);
-		}, nullptr, window, sapFilters, 1);
-	}
-
-	if (ImGui::MenuItem("Record VGM...", nullptr, false, !recording)) {
-		static const SDL_DialogFileFilter vgmFilters[] = {
-			{ "VGM Audio", "vgm" }, { "All Files", "*" },
-		};
-		ATUIShowSaveFileDialog('rvgm', [](void *, const char * const *fl, int) {
-			if (fl && fl[0])
-				ATUIPushDeferred(kATDeferred_StartRecordVGM, fl[0]);
-		}, nullptr, window, vgmFilters, 1);
-	}
-
+	if (ImGui::MenuItem("Record SAP Type R...", nullptr, false, !recording))
+		ATUIRecordSAP(window);
+	if (ImGui::MenuItem("Record VGM...", nullptr, false, !recording))
+		ATUIRecordVGM(window);
 	ImGui::Separator();
 
 	if (ImGui::MenuItem("Stop Recording", nullptr, false, recording))
@@ -1177,6 +1194,10 @@ static void RenderWindowMenu(SDL_Window *window) {
 // =========================================================================
 
 static void RenderHelpMenu(ATUIState &state) {
+	if (ImGui::MenuItem("Search actions and settings...",
+		ATUIGetShortcutStringForCommand("UI.GlobalSearch")))
+		ATUIOpenGlobalSearch();
+	ImGui::Separator();
 	if (ImGui::MenuItem("Contents"))
 		state.showHelpContents = true;
 
@@ -1256,26 +1277,78 @@ void ATUIRenderMainMenu(ATSimulator &sim, SDL_Window *window, IDisplayBackend *b
 		return;
 	}
 
-	if (!ImGui::BeginMainMenuBar()) {
+	// Windows wraps native menu bars when their labels exceed the width.
+	// ImGui's stock main menu bar reserves one row; reserve all needed rows
+	// here while preserving the same menu order and one menu navigation set.
+	const char *labels[] = {"File", "View", "System", "Input", "Cheat", "Debug",
+		"Record", "Tools", "Online Play", "Window", "Help"};
+	const ImGuiStyle& style = ImGui::GetStyle();
+	const float margin = std::max(style.DisplaySafeAreaPadding.x, style.WindowPadding.x);
+	const float available = ImGui::GetMainViewport()->Size.x - margin * 2;
+	const float rowHeight = ImGui::GetFrameHeight();
+	auto menuWidth = [&](const char *label) {
+		return ImGui::CalcTextSize(label).x + style.ItemSpacing.x * 2;
+	};
+	int rows = 1;
+	float used = 0;
+	for (const char *label : labels) {
+		const float width = menuWidth(label);
+		if (used > 0 && used + width > available) { ++rows; used = 0; }
+		used += width;
+	}
+	const float height = rowHeight * rows;
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, style.Colors[ImGuiCol_MenuBarBg]);
+	const bool visible = ImGui::BeginViewportSideBar("##MainMenuBar",
+		ImGui::GetMainViewport(), ImGuiDir_Up, height,
+		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_MenuBar);
+	ImGui::PopStyleColor();
+	if (!visible) {
+		ImGui::End();
 		ATUIProcessDeferredMenuDialogs(window);
 		return;
 	}
+	ImGuiWindow *menuWindow = ImGui::GetCurrentWindow();
+	menuWindow->DC.MenuBarOffset.x = margin;
+	menuWindow->MenuBarHeight = height;
+	ImGui::BeginMenuBar();
+	// BeginMenu positions popups relative to the current row, not the total
+	// wrapped bar height. BeginMenuBar has already installed the full clip.
+	menuWindow->MenuBarHeight = rowHeight;
+	const ImVec2 start = ImGui::GetCursorScreenPos();
+	int row = 0;
+	used = 0;
+	auto beginMenu = [&](const char *label) {
+		const float width = menuWidth(label);
+		if (used > 0 && used + width > available) {
+			++row;
+			used = 0;
+			ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + row * rowHeight));
+			menuWindow->DC.IsSameLine = false;
+			menuWindow->DC.CurrLineSize = ImVec2(0, 0);
+			ImGui::AlignTextToFramePadding();
+		}
+		used += width;
+		return ImGui::BeginMenu(label);
+	};
 
-	if (ImGui::BeginMenu("File")) { RenderFileMenu(sim, state, window); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("View")) { ATUIRenderViewMenu(sim, state, window, backend); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("System")) { ATUIRenderSystemMenu(sim, state); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Input")) { RenderInputMenu(sim, state); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Cheat")) { RenderCheatMenu(sim, state); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Debug")) { ATUIRenderDebugMenu(sim); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Record")) { RenderRecordMenu(sim, window); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Tools")) { RenderToolsMenu(sim, state, window); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Online Play")) { ATUIRenderOnlineMenu(); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Window")) { RenderWindowMenu(window); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Help")) { RenderHelpMenu(state); ImGui::EndMenu(); }
+	if (beginMenu("File")) { RenderFileMenu(sim, state, window); ImGui::EndMenu(); }
+	if (beginMenu("View")) { ATUIRenderViewMenu(sim, state, window, backend); ImGui::EndMenu(); }
+	if (beginMenu("System")) { ATUIRenderSystemMenu(sim, state); ImGui::EndMenu(); }
+	if (beginMenu("Input")) { RenderInputMenu(sim, state); ImGui::EndMenu(); }
+	if (beginMenu("Cheat")) { RenderCheatMenu(sim, state); ImGui::EndMenu(); }
+	if (beginMenu("Debug")) { ATUIRenderDebugMenu(sim); ImGui::EndMenu(); }
+	if (beginMenu("Record")) { RenderRecordMenu(sim, window); ImGui::EndMenu(); }
+	if (beginMenu("Tools")) { RenderToolsMenu(sim, state, window); ImGui::EndMenu(); }
+	if (beginMenu("Online Play")) { ATUIRenderOnlineMenu(); ImGui::EndMenu(); }
+	if (beginMenu("Window")) { RenderWindowMenu(window); ImGui::EndMenu(); }
+	if (beginMenu("Help")) { RenderHelpMenu(state); ImGui::EndMenu(); }
+
+	ATUIRenderSearchMenuButton();
 
 	// Store the menu bar height so the display rect calculation can offset
 	// the emulator screen below the menu bar.
-	g_menuBarHeight = ImGui::GetWindowSize().y;
+	g_menuBarHeight = height;
 
 	ImGui::EndMainMenuBar();
 #endif

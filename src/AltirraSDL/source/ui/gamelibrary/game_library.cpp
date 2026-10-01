@@ -583,6 +583,10 @@ static bool ParseCacheDocument(const void *buf, size_t size,
 			if (lastPlayed.IsInt())
 				entry.mLastPlayed = (uint64_t)lastPlayed.AsInt64();
 
+			auto profile = g[L"launchProfileId"];
+			if (profile.IsInt() && profile.AsInt64() >= 0 && profile.AsInt64() <= UINT32_MAX)
+				entry.mLaunchProfileId = (uint32_t)profile.AsInt64();
+
 			auto playCount = g[L"playCount"];
 			if (playCount.IsInt())
 				entry.mPlayCount = (uint32_t)playCount.AsInt64();
@@ -854,6 +858,11 @@ bool ATGameLibrary::WriteCacheFile(const VDStringW &path) const {
 
 			writer.WriteMemberName(L"playCount");
 			writer.WriteInt((sint64)entry.mPlayCount);
+
+			if (entry.mLaunchProfileId != UINT32_MAX) {
+				writer.WriteMemberName(L"launchProfileId");
+				writer.WriteInt((sint64)entry.mLaunchProfileId);
+			}
 
 			// v3: only written when there is something to write, so a
 			// library that never used the scraper produces a cache
@@ -2266,6 +2275,7 @@ void ATGameLibrary::MergePlayHistory(std::vector<GameEntry> &newEntries,
 				const auto &old = oldEntries[it->second];
 				entry.mLastPlayed = old.mLastPlayed;
 				entry.mPlayCount = old.mPlayCount;
+				entry.mLaunchProfileId = old.mLaunchProfileId;
 				// Online metadata and downloaded media survive a
 				// rescan.  The scanner cannot rediscover any of it —
 				// the media lives under media/, which is not a scanned
