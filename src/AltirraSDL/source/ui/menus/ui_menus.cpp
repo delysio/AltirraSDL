@@ -1351,7 +1351,7 @@ void ATUIRenderMainMenu(ATSimulator &sim, SDL_Window *window, IDisplayBackend *b
 	if (beginMenu("Window")) { RenderWindowMenu(window); ImGui::EndMenu(); }
 	if (beginMenu("Help")) { RenderHelpMenu(state); ImGui::EndMenu(); }
 
-	ATUIRenderSearchMenuButton();
+	ATUIRenderSearchMenuInput();
 
 	// Store the menu bar height so the display rect calculation can offset
 	// the emulator screen below the menu bar.

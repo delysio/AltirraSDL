@@ -30,6 +30,23 @@ namespace {
 	char g_query[192] {};
 	bool g_focus = false;
 	int g_selected = 0;
+	int g_menuInputFrame = -1;
+	ImGuiID g_menuInputId = 0;
+	ImGuiID g_dialogInputId = 0;
+	bool g_menuKeyboardFocus = false;
+	bool g_menuQueryChanged = false;
+	bool g_usedMenuInput = false;
+
+	void CloseSearch(ATUIState& state) {
+		state.showGlobalSearch = false;
+		g_query[0] = 0;
+		g_selected = 0;
+		g_focus = false;
+		g_usedMenuInput = false;
+		if (GImGui->ActiveId && (GImGui->ActiveId == g_menuInputId
+			|| GImGui->ActiveId == g_dialogInputId))
+			ImGui::ClearActiveID();
+	}
 	std::string g_highlight;
 	std::string g_highlightTitle;
 	int g_highlightFrames = 0;
@@ -91,33 +108,61 @@ namespace {
 }
 
 void ATUIOpenGlobalSearch() {
+	CloseSearch(g_uiState);
 	g_uiState.showGlobalSearch = true;
 	g_focus = true;
 	g_selected = 0;
 }
 
-void ATUIRenderSearchMenuButton() {
+void ATUIRenderSearchMenuInput() {
 	const float gap = ImGui::GetStyle().ItemSpacing.x;
 	const float available = ImGui::GetWindowWidth()
 		- ImGui::GetCursorPosX() - ImGui::GetStyle().WindowPadding.x;
-	const float fullWidth = ImGui::CalcTextSize("Search actions and settings...").x
+	const float preferred = ImGui::CalcTextSize("Search actions and settings...").x
 		+ ImGui::GetStyle().FramePadding.x * 2;
-	const char *label = available >= fullWidth + gap
-		? "Search actions and settings..." : "Search";
-	const float width = ImGui::CalcTextSize(label).x
+	const float minimum = ImGui::CalcTextSize("Search...").x
 		+ ImGui::GetStyle().FramePadding.x * 2;
-	if (available < width + gap)
-		return; // The Help menu and shortcut remain available at small sizes.
+	if (available < minimum + gap)
+		return; // The Help menu and shortcut keep the dialog input available.
+	const float width = std::min(preferred, available - gap);
+	g_menuInputFrame = ImGui::GetFrameCount();
+	if (!g_uiState.showGlobalSearch)
+		g_query[0] = 0;
 	ImGui::SetCursorPosX(ImGui::GetWindowWidth() - width - gap);
-	if (ImGui::Button(label))
-		ATUIOpenGlobalSearch();
+	ImGui::SetNextItemWidth(width);
+	if (g_focus || (g_uiState.showGlobalSearch && !g_usedMenuInput)) {
+		ImGui::SetKeyboardFocusHere();
+		g_focus = false;
+	}
+	g_menuQueryChanged = ImGui::InputTextWithHint("##search",
+		"Search actions and settings...", g_query, sizeof g_query,
+		ImGuiInputTextFlags_AutoSelectAll);
+	g_menuInputId = ImGui::GetItemID();
+	// InputText releases its active ID on Enter/Escape. Keep those keys
+	// routed to search for this frame so they can select/close results.
+	g_menuKeyboardFocus = ImGui::IsItemActive() || ImGui::IsItemDeactivated()
+		|| ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+	if (ImGui::IsItemActivated() || g_menuQueryChanged) {
+		g_uiState.showGlobalSearch = true;
+		g_selected = 0;
+	}
 	ImGui::SetItemTooltip("Find a command or configuration setting. %s",
 		ATUIGetShortcutStringForCommand("UI.GlobalSearch"));
 }
 
 void ATUIRenderGlobalSearch(ATUIState& state) {
-	if (!state.showGlobalSearch)
+	if (!state.showGlobalSearch) {
+		CloseSearch(state);
 		return;
+	}
+	// The requested live search field belongs to the ImGui menu bar.
+	// Native macOS menus and hidden bars retain the dialog's own input.
+	const bool menuInput = g_menuInputFrame == ImGui::GetFrameCount();
+	// Fullscreen and resizing can remove or restore the corner field while
+	// search is open. Transfer typing focus to the input that remains visible.
+	if (!menuInput && g_usedMenuInput)
+		g_focus = true;
+	g_usedMenuInput = menuInput;
 	ATUIConstrainDialogSize();
 	const float bodySize = ImGui::GetFontSize();
 	const float fontBase = ImGui::GetStyle().FontSizeBase;
@@ -126,13 +171,17 @@ void ATUIRenderGlobalSearch(ATUIState& state) {
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
 		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Search actions and settings", &state.showGlobalSearch,
-		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse)) {
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse
+		| (menuInput ? ImGuiWindowFlags_NoFocusOnAppearing : 0))) {
 		ImGui::End();
+		if (!state.showGlobalSearch) CloseSearch(state);
 		return;
 	}
 	ATUIClampDialogPosition();
-	if (ATUICheckEscClose()) {
-		state.showGlobalSearch = false;
+	if (!state.showGlobalSearch || ATUICheckEscClose()
+		|| (menuInput && g_menuKeyboardFocus
+			&& ImGui::IsKeyPressed(ImGuiKey_Escape, ImGuiInputFlags_None, ImGuiKeyOwner_Any))) {
+		CloseSearch(state);
 		ImGui::End();
 		return;
 	}
@@ -140,13 +189,18 @@ void ATUIRenderGlobalSearch(ATUIState& state) {
 	ImGui::TextUnformatted("Find an action or setting");
 	ImGui::PopFont();
 	ImGui::Spacing();
-	if (g_focus || ImGui::IsWindowAppearing()) {
-		ImGui::SetKeyboardFocusHere();
-		g_focus = false;
+	bool queryChanged = menuInput && g_menuQueryChanged;
+	if (!menuInput) {
+		if (g_focus || ImGui::IsWindowAppearing()) {
+			ImGui::SetKeyboardFocusHere();
+			g_focus = false;
+		}
+		ImGui::SetNextItemWidth(-1);
+		queryChanged = ImGui::InputTextWithHint("##search",
+			"Try controller, memory, PAL or screenshot", g_query, sizeof g_query,
+			ImGuiInputTextFlags_AutoSelectAll);
+		g_dialogInputId = ImGui::GetItemID();
 	}
-	ImGui::SetNextItemWidth(-1);
-	const bool queryChanged = ImGui::InputTextWithHint("##search", "Try controller, memory, PAL or screenshot",
-		g_query, sizeof g_query, ImGuiInputTextFlags_AutoSelectAll);
 	if (queryChanged)
 		g_selected = 0;
 	std::string query = Lower(g_query);
@@ -203,7 +257,9 @@ void ATUIRenderGlobalSearch(ATUIState& state) {
 	if (!results.empty())
 		g_selected = std::clamp(g_selected, 0, (int)results.size() - 1);
 	bool keyboardSelection = false;
-	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+	const bool keyboardFocused = (menuInput && g_menuKeyboardFocus)
+		|| ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+	if (keyboardFocused && !results.empty()) {
 		if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
 			g_selected = std::min(g_selected + 1, (int)results.size() - 1);
 			keyboardSelection = true;
@@ -213,8 +269,8 @@ void ATUIRenderGlobalSearch(ATUIState& state) {
 			keyboardSelection = true;
 		}
 	}
-	const bool activate = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
-		&& ImGui::IsKeyPressed(ImGuiKey_Enter);
+	const bool activate = keyboardFocused
+		&& ImGui::IsKeyPressed(ImGuiKey_Enter, ImGuiInputFlags_None, ImGuiKeyOwner_Any);
 	ImGui::Separator();
 	const Result *chosen = nullptr;
 	char footer[160];
@@ -268,7 +324,7 @@ void ATUIRenderGlobalSearch(ATUIState& state) {
 		chosen = &results[g_selected];
 	if (!chosen)
 		return;
-	state.showGlobalSearch = false;
+	CloseSearch(state);
 	if (chosen->setting) {
 		state.systemConfigCategory = chosen->setting->category;
 		state.showSystemConfig = true;

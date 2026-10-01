@@ -1,5 +1,6 @@
 """Desktop discovery and profile isolation regressions."""
 import json
+import sys
 import pytest
 
 from .harness import AltirraTestHarness
@@ -8,6 +9,11 @@ from .test_explorers import click, enter, xex_bytes
 
 @pytest.fixture
 def desktop(request, monkeypatch, tmp_path):
+    if sys.platform != "darwin":
+        # Keep other test processes and the desktop from stealing typing focus.
+        monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+        monkeypatch.setenv("SDL_AUDIODRIVER", "dummy")
+        monkeypatch.setenv("ALTIRRA_DISPLAY_BACKEND", "sdlrenderer")
     (tmp_path / "config").mkdir()
     library_dir = tmp_path / "config" / "altirra"
     library_dir.mkdir()
@@ -33,10 +39,80 @@ def desktop(request, monkeypatch, tmp_path):
         yield emu
 
 
+def search_input_window():
+    return "Search actions and settings" if sys.platform == "darwin" else "##MainMenuBar"
+
+
 def search(emu, query):
     emu.send("run_command UI.GlobalSearch")
     emu.wait_frames(3)
-    enter(emu, "Search actions and settings", "##search", query)
+    enter(emu, search_input_window(), "##search", query)
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="Uses the ImGui menu bar")
+def test_corner_search_typing_focus_and_reset(desktop):
+    emu = desktop
+    click(emu, "##MainMenuBar", "##search")
+    emu.send("send_text Memory ")
+    emu.wait_frames(4)
+    assert emu.get_dialog_state("GlobalSearch")
+    assert "Memory" in emu.get_item_labels("Search actions")
+    assert "##search" not in emu.get_item_labels("Search actions")
+    # Opening results must leave typing focus in the corner field.
+    emu.send("send_text Size")
+    emu.wait_frames(4)
+    assert "Memory Size" in emu.get_item_labels("Search actions")
+    labels = emu.get_item_labels("Search actions")
+    assert labels.index("Memory Size") < labels.index("Memory")
+    emu.send("key enter")
+    emu.wait_frames(5)
+    assert emu.get_dialog_state("SystemConfig")
+    assert not emu.get_dialog_state("GlobalSearch")
+    emu.close_dialog("SystemConfig")
+    # No Ctrl+A here: closing must have cleared the previous query.
+    click(emu, "##MainMenuBar", "##search")
+    emu.send("send_text VBXE")
+    emu.wait_frames(4)
+    assert "VideoBoard XE (VBXE)" in emu.get_item_labels("Search actions")
+    emu.send("key escape")
+    emu.wait_frames(4)
+    assert not emu.get_dialog_state("GlobalSearch")
+    click(emu, "##MainMenuBar", "##search")
+    emu.send("send_text Game Library")
+    emu.wait_frames(4)
+    click(emu, "Search actions", "Game Library")
+    assert emu.get_dialog_state("GameLibrary")
+    assert not emu.get_dialog_state("GlobalSearch")
+    emu.close_dialog("GameLibrary")
+    click(emu, "##MainMenuBar", "##search")
+    emu.send("send_text VBXE")
+    emu.wait_frames(4)
+    assert "VideoBoard XE (VBXE)" in emu.get_item_labels("Search actions")
+
+    window = next(w for w in emu.query_state()["state"]["windows"]
+                  if w["name"] == "Search actions and settings")
+    emu.send(f"click_at {window['x'] + window['w'] - 14} {window['y'] + 14}")
+    emu.wait_frames(6)
+    assert not emu.get_dialog_state("GlobalSearch")
+    click(emu, "##MainMenuBar", "##search")
+    emu.send("send_text Game Library")
+    emu.wait_frames(4)
+    assert "Game Library" in emu.get_item_labels("Search actions")
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="Uses the ImGui menu bar")
+def test_search_without_visible_corner_field(desktop):
+    emu = desktop
+    emu.send("run_command View.ToggleFullScreen")
+    emu.wait_frames(5)
+    assert not emu.list_items("##MainMenuBar")
+    emu.send("run_command UI.GlobalSearch")
+    emu.wait_frames(4)
+    enter(emu, "Search actions and settings", "##search", "VBXE")
+    assert "VideoBoard XE (VBXE)" in emu.get_item_labels("Search actions")
+    emu.send("key escape")
+    emu.wait_frames(4)
+    assert not emu.get_dialog_state("GlobalSearch")
 
 
 def config(emu, category):
@@ -72,7 +148,7 @@ def test_search_settings_and_keyboard(desktop):
     emu.send("run_command UI.GlobalSearch")
     emu.wait_frames(4)
     assert emu.get_dialog_state("GlobalSearch")
-    enter(emu, "Search actions and settings", "##search", "Memory Size", True)
+    enter(emu, search_input_window(), "##search", "Memory Size", True)
     assert emu.get_dialog_state("SystemConfig")
     assert emu.query_state()["state"]["configurationPage"] == 5
     assert any(i["label"] == "Memory Size" for i in emu.list_items())

@@ -87,7 +87,10 @@ namespace {
 	};
 
 	const VDAccelTableEntry kATDefaultAccelTableGlobal[] = {
+#ifdef VD_OS_MACOS
+		// Native menus open search with an input inside the dialog.
 		{ "UI.GlobalSearch", 0, { kATInputCode_KeyK, CTRL } },
+#endif
 		{ "Cheat.CheatDialog",             0, { kATInputCode_KeyH,   ALT+SHIFT } },
 		{ "File.BootImage",                0, { kATInputCode_KeyB,   ALT } },
 		{ "File.OpenImage",                0, { kATInputCode_KeyO,   ALT } },

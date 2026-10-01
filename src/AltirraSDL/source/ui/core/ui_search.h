@@ -4,7 +4,7 @@
 struct ATUIState;
 struct ImGuiContext;
 void ATUIOpenGlobalSearch();
-void ATUIRenderSearchMenuButton();
+void ATUIRenderSearchMenuInput();
 void ATUIRenderGlobalSearch(ATUIState& state);
 void ATUISearchSettingAdd(ImGuiContext *context, ImGuiID id,
 	const ImVec2& min, const ImVec2& max);

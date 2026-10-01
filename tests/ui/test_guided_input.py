@@ -80,6 +80,22 @@ def row_click(emu, label, row):
     emu.wait_frames(6)
 
 
+def test_controller_source_and_device_selector_are_independent(guided):
+    emu = guided
+    open_setup(emu)
+    click(emu, WINDOW, "Keyboard and controller")
+    click(emu, WINDOW, "Controller")
+    # BeginCombo has no ItemInfo label in ImGui. Its previous shared ID
+    # made it masquerade as the radio button in the test registry too.
+    source = next(i for i in emu.list_items(WINDOW) if i["label"] == "Controller")
+    emu.send(f"click_at {source['x'] + 20} {source['y'] + source['h'] + 14}")
+    emu.wait_frames(6)
+    assert "Detect on next controller input" in emu.get_item_labels()
+    click(emu, "", "Detect on next controller input")
+    click(emu, WINDOW, "Keyboard")
+    close_setup(emu)
+
+
 def test_keyboard_reuses_map_and_preserves_advanced_bindings(guided):
     emu = guided
     existing = emu.send("input_maps")["maps"]

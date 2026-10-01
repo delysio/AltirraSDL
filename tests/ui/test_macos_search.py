@@ -15,8 +15,9 @@ def test_native_help_search_binding_and_activation(desktop):
     assert state["key"] == ord("k")
     assert state["control"]
     assert not state["shift"] and not state["option"]
-    # macOS has no duplicate ImGui corner button or menu bar.
+    # macOS has no duplicate ImGui corner input or menu bar.
     assert not desktop.list_items("##MainMenuBar")
     desktop.send("native_search_activate")
     desktop.wait_frames(5)
     assert desktop.get_dialog_state("GlobalSearch")
+    assert "##search" in desktop.get_item_labels("Search actions")

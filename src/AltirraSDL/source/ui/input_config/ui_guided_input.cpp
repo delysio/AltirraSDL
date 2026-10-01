@@ -309,7 +309,7 @@ void ATUIRenderGuidedJoystickSetup(ATSimulator& sim) {
 		VDStringA device = name ? VDTextWToU8(name, -1)
 			: draft.unit < 0 ? VDStringA("Detect on first controller input")
 			: VDStringA("Controller disconnected");
-		if (ImGui::BeginCombo("Controller", device.c_str())) {
+		if (ImGui::BeginCombo("Controller##device", device.c_str())) {
 			if (ImGui::Selectable("Detect on next controller input", draft.unit < 0)) {
 				draft.unit = -1;
 			}
